@@ -28,3 +28,6 @@ Avaa http://localhost:8766
 - Uutiset avautuvat alkuperäisillä sivuilla. Tämä versio ei sisällä kokotekstilukutilaa.
 - Uutisia päivitetään palvelimella enintään viiden minuutin välein.
 - Otteluohjelma on suunniteltu versioon 2.0.
+
+## Häiriötön lukutila (v1.1)
+Uutiskortti avaa KalPa365:n oman popup-vapaan lukutilan, jossa näkyvät RSS-otsikko ja syötteessä saatavilla oleva tiivistelmä. Google News RSS ei yleensä sisällä koko artikkelia; alkuperäisen artikkelin linkki on aina saatavilla.
