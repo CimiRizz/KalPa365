@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: kalpa365
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python KalPa365_palvelin.py
+    healthCheckPath: /health
