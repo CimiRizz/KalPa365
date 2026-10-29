@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""KalPa365 v1.3 — direct RSS sources only, no Google News."""
+"""KalPa365 v1.4 — direct RSS, diagnostics and rolling article history."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
-import json, os, re, time, threading, pathlib, html
+import json, os, re, time, threading, pathlib, html, sqlite3
 from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent
 PORT = int(os.environ.get('PORT', '8766'))
 TTL = 300
+DB_PATH = pathlib.Path(os.environ.get('KALPA365_DB', str(ROOT / 'kalpa365_history.sqlite3')))
+HISTORY_DAYS = 30
 LOCK = threading.Lock()
 CACHE = {'at': 0, 'data': None}
-# Google News returns articles from many publishers. Separate searches help
-# smaller publishers surface alongside national news outlets.
 FEEDS = {
     'IS': ['https://www.is.fi/rss/tuoreimmat.xml'],
     'IL': ['https://www.iltalehti.fi/rss/tuoreimmat.xml'],
@@ -41,6 +41,26 @@ def child_text(node, names):
 def strip_markup(value):
     return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', value or ''))).strip()
 
+def history_connect():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute('CREATE TABLE IF NOT EXISTS articles (url TEXT PRIMARY KEY, payload TEXT NOT NULL, timestamp REAL NOT NULL, seen REAL NOT NULL)')
+    return conn
+
+def history_merge(fresh):
+    # Render Free instance filesystem is ephemeral. History survives normal requests,
+    # but can be lost on restart/redeploy unless a persistent DB is configured.
+    try:
+        with history_connect() as db:
+            now = time.time()
+            for a in fresh:
+                db.execute('INSERT INTO articles(url,payload,timestamp,seen) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload, timestamp=excluded.timestamp, seen=excluded.seen', (a['url'], json.dumps(a, ensure_ascii=False), a['timestamp'], now))
+            db.execute('DELETE FROM articles WHERE seen < ?', (now - HISTORY_DAYS * 86400,))
+            rows = db.execute('SELECT payload FROM articles ORDER BY timestamp DESC LIMIT 500').fetchall()
+        return [json.loads(row[0]) for row in rows], 'ok'
+    except (OSError, sqlite3.Error) as exc:
+        return fresh, f'unavailable: {type(exc).__name__}'
+
 def fetch(source, urls):
     failures=[]
     for url in urls:
@@ -50,15 +70,17 @@ def fetch(source, urls):
                 raw=response.read(2_000_001)
                 if len(raw)>2_000_000: raise ValueError('Feed too large')
             root=ET.fromstring(raw)
-            results=[]
+            results=[]; scanned=0; publisher_links=0
             for item in root.iter():
                 if local(item.tag) not in ('item','entry'): continue
+                scanned += 1
                 title=strip_markup(child_text(item,{'title'}))
                 link=child_text(item,{'link'})
                 if not link:
                     link=next((c.attrib['href'] for c in item if local(c.tag)=='link' and c.attrib.get('href')), '')
                 summary=strip_markup(child_text(item,{'description','summary','encoded','content'}))
                 if not title or not allowed_publisher(link): continue
+                publisher_links += 1
                 if not POSITIVE.search(title+' '+summary) or NEGATIVE.search(title): continue
                 pub=child_text(item,{'pubdate','published','updated','date'})
                 try: stamp=parsedate_to_datetime(pub).timestamp()
@@ -66,7 +88,7 @@ def fetch(source, urls):
                     try: stamp=datetime.fromisoformat(pub.replace('Z','+00:00')).timestamp()
                     except Exception: stamp=0
                 results.append({'title':title,'source':source,'url':link,'summary':summary[:500], 'timestamp':stamp,'published':pub})
-            return results, {'status':'ok','count':len(results),'feed':url}
+            return results, {'status':'ok','count':len(results),'scanned':scanned,'publisher_links':publisher_links,'feed':url}
         except Exception as exc:
             failures.append(f'{type(exc).__name__}: {str(exc)[:100]}')
     return [],{'status':'error','count':0,'message':' | '.join(failures)}
@@ -81,9 +103,10 @@ def news():
         for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
             key=item['url'].split('?')[0].rstrip('/')
             if key not in seen: seen.add(key); unique.append(item)
-        data={'articles':unique[:150],'sources':sources,'updated':datetime.now(timezone.utc).isoformat(),
+        historical,history_status=history_merge(unique)
+        data={'articles':historical[:150],'sources':sources,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
               'errors':[name for name,info in sources.items() if info['status']=='error'],
-              'status':'ok' if unique else ('error' if all(v['status']=='error' for v in sources.values()) else 'empty')}
+              'status':'ok' if historical else ('error' if all(v['status']=='error' for v in sources.values()) else 'empty')}
         CACHE.update(at=time.time(),data=data)
         return data
 
@@ -129,6 +152,10 @@ def article_for(original):
     return {'status':'full','paragraphs':paragraphs[:100],'original_url':original}
 
 class Handler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        if urlparse(self.path).path in ('/', '/health'):
+            self.send_response(200); self.send_header('Content-Length','0'); self.end_headers()
+        else: self.send_error(404)
     def do_GET(self):
         path = urlparse(self.path).path
         if path in ('/', '/index.html'):
