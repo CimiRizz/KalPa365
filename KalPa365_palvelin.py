@@ -29,7 +29,15 @@ FEEDS = {
 # Lähteen mahdollinen virhe näkyy /api/news-vastauksen sources-kentässä.
 POSITIVE = re.compile(r'(?<!\w)kalpa(?:n|lle|lta|ssa|sta|an|a)?(?!\w)|kuopion\s+kalpa', re.I)
 NEGATIVE = re.compile(r'kalpa(?:na|lla)?\s+(?:ruoka|esine|kukka)|kalpa\s+miekk', re.I)
-ALLOWED_PUBLISHERS = ('is.fi','iltalehti.fi','jatkoaika.com','savonsanomat.fi','liiga.fi')
+
+ALLOWED_PUBLISHERS = (
+    'is.fi',
+    'iltalehti.fi',
+    'jatkoaika.com',
+    'savonsanomat.fi',
+    'liiga.fi',
+    'yle.fi',
+)
 
 def allowed_publisher(url):
     p=urlparse(url)
