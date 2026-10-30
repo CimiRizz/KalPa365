@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.2 — direct source discovery and reader."""
+"""KalPa365 v2.3 — direct source discovery and reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -522,10 +522,70 @@ def jsonld_paragraphs(scripts):
     body=max(bodies,key=len)
     return [x.strip() for x in re.split(r'\n\s*\n',html.unescape(body)) if len(x.strip())>35]
 
+BUILDER_API_KEY = 'f11503eeae084753968caac3899a5d78'  # Public, read-only Builder.io key.
+BUILDER_MODEL = 'news-article-v-1'
+BUILDER_ENDPOINT = f'https://cdn.builder.io/api/v3/query/{BUILDER_API_KEY}/{BUILDER_MODEL}'
+
+def fetch_liiga_article(original):
+    """Read published Liiga article text from the public Builder.io content query."""
+    parsed = urlparse(original)
+    if parsed.hostname != 'liiga.fi' or not re.fullmatch(r'/fi/uutiset/[a-z0-9-]+/?', parsed.path):
+        raise ValueError('Not a supported Liiga news URL')
+    params = {
+        'omit': 'meta.componentsUsed', 'apiKey': BUILDER_API_KEY,
+        'locale': 'fi', 'includeUnpublished': 'false',
+        'userAttributes': json.dumps({'urlPath': parsed.path.rstrip('/'),
+                                      'host': 'liiga.fi', 'device': 'desktop'}, separators=(',', ':')),
+        'options.news-article-v-1.model': json.dumps(BUILDER_MODEL),
+    }
+    url = BUILDER_ENDPOINT + '?' + urlencode(params)
+    req = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.3)',
+                                'Accept': 'application/json', 'Referer': 'https://liiga.fi/'})
+    with urlopen(req, timeout=15) as response:
+        final = urlparse(response.geturl())
+        if final.scheme != 'https' or final.hostname != 'cdn.builder.io':
+            raise ValueError('Unexpected Builder.io redirect')
+        raw = response.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError('Builder.io response too large')
+    payload = json.loads(raw.decode('utf-8-sig'))
+    entries = payload.get(BUILDER_MODEL, []) if isinstance(payload, dict) else []
+    if not isinstance(entries, list):
+        raise ValueError('Unexpected Builder.io response')
+    for item in entries:
+        if not isinstance(item, dict) or item.get('published') != 'published':
+            continue
+        data = item.get('data') or {}
+        if not isinstance(data, dict):
+            continue
+        # The query is URL-targeted; additionally verify the article's explicit URL when present.
+        explicit = data.get('url') or data.get('articleUrl') or item.get('previewUrl')
+        if isinstance(explicit, str) and explicit:
+            check = urlparse(urljoin('https://liiga.fi/', explicit))
+            if check.path.rstrip('/') != parsed.path.rstrip('/'):
+                continue
+        body = data.get('searchText')
+        if not isinstance(body, str) or len(body.strip()) < 60:
+            continue
+        paragraphs = [html.unescape(chunk.strip()) for chunk in re.split(r'\n\s*\n', body)
+                      if chunk.strip()]
+        return {'status': 'full', 'paragraphs': paragraphs[:100],
+                'original_url': original, 'extraction': 'builder.io',
+                'title': strip_markup(str(data.get('articleTitle') or item.get('name') or ''))}
+    return {'status': 'summary', 'paragraphs': [], 'original_url': original,
+            'message': 'Liigan artikkelin tekstiä ei löytynyt Builder.io-rajapinnasta.'}
+
 def article_for(original):
     if original not in {a['url'] for a in news()['articles']}:
         raise ValueError('Article not in current feed')
     if not allowed_publisher(original): raise ValueError('Publisher not allowed')
+    if urlparse(original).hostname == 'liiga.fi':
+        try:
+            result = fetch_liiga_article(original)
+            if result['status'] == 'full':
+                return result
+        except (ValueError, OSError, TimeoutError, json.JSONDecodeError):
+            pass  # Preserve existing HTML reader fallback.
     req=Request(original,headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365Reader/1.8)','Accept':'text/html'})
     with urlopen(req,timeout=12) as response:
         if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
