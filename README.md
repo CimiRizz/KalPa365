@@ -1,12 +1,17 @@
-KalPa365 2.0 — suorien uutislähteiden haku
+KalPa365 2.1 — Liiga.fi:n uutisdatan poiminta
 
-Sisältö:
-- RSS: IS, IL, Savon Sanomat, Yle. Kaikki määritellyt RSS-syötteet luetaan.
-- Jatkoaika: julkisen KalPa-joukkuesivun artikkelilinkit, jos sivu sallii palvelinpyynnöt.
-- Liiga.fi: julkisen uutisluettelon artikkelilinkit, jos ne sisältyvät HTML-vastaukseen.
-- Kokotekstin lukutila ja SQLite-historia ennallaan.
-- /api/news → sources sisältää lähdekohtaisen tilan ja sivudiagnostiikan.
+Korvaa GitHubissa KalPa365_palvelin.py. Muut tiedostot pysyvät samoina.
 
-Rajoitukset: Jatkoajan HTTP 403 -estoa ei kierretä. Liiga.fi:n JS:llä ladattuja artikkeleita ei välttämättä löydy. IS/IL:n RSS:ssä voi edelleen olla 0 KalPa-osumaa. Lähdekohtaisten julkisten sivujen toteutus on kokeellinen, ei tuotannossa vahvistettu.
+Uusi poiminta:
+- Liigan uutisluettelo ja etusivu
+- julkiset HTML-artikkelilinkit
+- sivuun upotettu JSON (application/json ja JSON-LD)
+- diagnostiset html_links, json_records, json_scripts, bytes /api/news → sources → Liiga.fi → pages
 
-Asennus: Korvaa GitHubissa neljä tiedostoa ja tee commit. Render Start Command: python KalPa365_palvelin.py
+HUOM. Tämä on kokeellinen poiminta: Liigan julkisen sivun todellista HTML-vastausta
+Render-ympäristössä ei ole vielä tarkistettu. Nolla tulosta voi tarkoittaa,
+että uutiset tulevat erillisestä verkkopyynnöstä. Tässä versiossa ei arvata API-osoitetta.
+
+Jos edelleen 0: selaimen F12 → Network → Fetch/XHR → päivitä Liigan uutiset -sivu
+ja kopioi uutislistan palauttavan pyynnön URL ja vastausrakenteen esimerkki.
+Älä lähetä evästeitä tai kirjautumistunnuksia.

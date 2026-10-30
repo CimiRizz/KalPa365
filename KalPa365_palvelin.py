@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.0 — direct source discovery and reader."""
+"""KalPa365 v2.1 — direct source discovery and reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -221,7 +221,7 @@ def fetch_liiga():
 # A 403 response is recorded and never bypassed.
 DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
-    'Liiga.fi': ['https://liiga.fi/fi/uutiset?kategoria=uusimmat'],
+
 }
 
 class DirectLinkParser(HTMLParser):
@@ -271,6 +271,143 @@ def fetch_direct(source, pages):
                        'publisher_links': sum(d.get('scanned', 0) for d in diagnostics),
                        'pages': diagnostics, 'feed': pages[0]}
 
+
+# Liiga 2.1: extract public news records from embedded JSON and HTML.
+# This is intentionally not a guessed/private API endpoint.
+LIIGA_NEWS_PAGES = [
+    'https://liiga.fi/fi/uutiset?kategoria=uusimmat',
+    'https://liiga.fi/fi',
+]
+
+def liiga_news_url(value):
+    if not isinstance(value, str):
+        return ''
+    value = html.unescape(value).replace('\\/', '/')
+    if value.startswith('/'):
+        value = urljoin('https://liiga.fi', value)
+    parsed = urlparse(value)
+    if parsed.scheme != 'https' or parsed.hostname not in ('liiga.fi', 'www.liiga.fi'):
+        return ''
+    if not re.fullmatch(r'/fi/uutiset/[^/?#]+', parsed.path):
+        return ''
+    return 'https://liiga.fi' + parsed.path
+
+def liiga_json_candidates(obj, depth=0):
+    if depth > 20:
+        return
+    if isinstance(obj, list):
+        for child in obj[:1000]:
+            yield from liiga_json_candidates(child, depth + 1)
+    elif isinstance(obj, dict):
+        title = next((obj.get(k) for k in ('title', 'headline', 'name')
+                      if isinstance(obj.get(k), str)), '')
+        url = next((liiga_news_url(obj.get(k)) for k in ('url', 'href', 'link',
+                   'canonicalUrl', 'path', 'slug') if liiga_news_url(obj.get(k))), '')
+        if title and url:
+            yield strip_markup(title), url
+        for value in obj.values():
+            if isinstance(value, (dict, list)):
+                yield from liiga_json_candidates(value, depth + 1)
+
+class LiigaPageParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links = []
+        self.active = None
+        self.scripts = []
+        self.script = None
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'script' and attrs.get('type', '').lower() in (
+                'application/json', 'application/ld+json'):
+            self.script = []
+        if tag == 'a':
+            url = liiga_news_url(attrs.get('href', ''))
+            if url:
+                self.active = [url, []]
+    def handle_data(self, value):
+        if self.script is not None:
+            self.script.append(value)
+        if self.active is not None:
+            self.active[1].append(value)
+    def handle_endtag(self, tag):
+        if tag == 'script' and self.script is not None:
+            self.scripts.append(''.join(self.script))
+            self.script = None
+        if tag == 'a' and self.active is not None:
+            title = strip_markup(' '.join(self.active[1]))
+            if title:
+                self.links.append((title, self.active[0]))
+            self.active = None
+
+def extract_liiga_news(document):
+    parser = LiigaPageParser()
+    parser.feed(document)
+    candidates = list(parser.links)
+    json_count = 0
+    for script in parser.scripts:
+        try:
+            data = json.loads(script)
+        except (ValueError, TypeError):
+            continue
+        found = list(liiga_json_candidates(data))
+        json_count += len(found)
+        candidates.extend(found)
+    # Some framework payloads contain JSON escaped as HTML. Match a URL only
+    # when an adjacent, explicit headline can be identified; no invented titles.
+    seen = set()
+    results = []
+    for title, url in candidates:
+        title = strip_markup(title)
+        url = liiga_news_url(url)
+        if not url or not title or len(title) < 8 or (url in seen):
+            continue
+        seen.add(url)
+        results.append((title, url))
+    return results, {'html_links': len(parser.links), 'json_records': json_count,
+                     'json_scripts': len(parser.scripts)}
+
+def fetch_liiga_news():
+    all_news, seen, diagnostics = [], set(), []
+    for page in LIIGA_NEWS_PAGES:
+        try:
+            req = Request(page, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.1)',
+                'Accept': 'text/html'
+            })
+            with urlopen(req, timeout=12) as response:
+                if not allowed_publisher(response.geturl()):
+                    raise ValueError('Unexpected redirect')
+                raw = response.read(2_000_001)
+                if len(raw) > 2_000_000:
+                    raise ValueError('Page too large')
+                document = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+            records, details = extract_liiga_news(document)
+            for title, link in records:
+                if link in seen:
+                    continue
+                seen.add(link)
+                if POSITIVE.search(title) and not NEGATIVE.search(title):
+                    all_news.append({
+                        'title': title, 'source': 'Liiga.fi', 'url': link,
+                        'summary': '', 'timestamp': 0, 'published': ''
+                    })
+            diagnostics.append({'page': page, 'status': 'ok',
+                                'scanned': len(records), **details,
+                                'bytes': len(raw)})
+        except Exception as exc:
+            diagnostics.append({'page': page, 'status': 'error',
+                                'message': f'{type(exc).__name__}: {str(exc)[:120]}'})
+    success = any(d['status'] == 'ok' for d in diagnostics)
+    return all_news, {
+        'status': 'ok' if success else 'error',
+        'count': len(all_news), 'scanned': len(seen),
+        'publisher_links': len(seen), 'pages': diagnostics,
+        'feed': LIIGA_NEWS_PAGES[0],
+        'note': ('Liiga public HTML/JSON extraction. '
+                 'Zero links means data is absent from the fetched HTML or in another format.')
+    }
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
@@ -281,6 +418,9 @@ def news():
             found, info = fetch_direct(source, pages)
             items.extend(found)
             sources[source] = info
+        liiga_items, liiga_info = fetch_liiga_news()
+        items.extend(liiga_items)
+        sources['Liiga.fi'] = liiga_info
         seen=set(); unique=[]
         for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
             key=item['url'].split('?')[0].rstrip('/')
