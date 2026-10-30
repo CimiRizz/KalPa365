@@ -1,11 +1,11 @@
-# KalPa365 v2.5 — KalPa pääaiheena
+# KalPa365 v2.6 — Liiga.fi-uutisten tarkennettu suodatus
 
-Tämä versio korjaa Liiga.fi:n uutisvalinnan. Pelkkä KalPa-maininta koko artikkelin `searchText`-kentässä ei enää riitä. Mukaan hyväksytään KalPaan keskittyvät otsikot ja KalPa-aiheiset ingressit tai artikkelin aloituskappaleet. Yleiset Liiga-tiedotteet ja otteluohjelmakoosteet rajataan pois.
+Korvaa GitHub-projektin viisi tiedostoa tämän paketin tiedostoilla.
 
-Muut uutislähteet, Builder.io-artikkelilukija ja 30 päivän uutishistoria säilyvät.
+- Hyväksyy KalPa-otsikon tai selvästi KalPaa käsittelevän uutisen aloitusvirkkeen.
+- Hyväksyy yhden vastustajan ottelujutut, mutta hylkää yleiset Liiga-tiedotteet ja usean joukkueen koosteet.
+- Ei hyväksy pelkkää KalPa-mainintaa pitkän artikkelin keskellä.
+- `/api/news` → `sources` → `Liiga.fi` → `pages` näyttää hylkäysten syyt (`rejected`).
+- Builder.io-lukutila ja muiden lähteiden haku ovat ennallaan.
 
-## Asennus
-Korvaa GitHub-repositorion viisi tiedostoa tämän ZIP:n vastaavilla ja odota Renderin julkaisua. Testaa `/api/news`-osoitteessa Liiga.fi:n `count` ja uutisten otsikot.
-
-## Testaus
-Python-syntaksi ja kuusi paikallista relevanssitestiä läpäisty. Live-Render-testin tulos selviää vasta julkaisun jälkeen.
+Huom. Jos Liiga.fi ei julkaise KalPa-aiheisia uutisia tarkastelujaksolla, tulos voi edelleen olla nolla.
