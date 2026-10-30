@@ -1,18 +1,12 @@
-# KalPa365 1.4 — suorat lähteet ja diagnostiikka
+# KalPa365 v1.5
 
-Lähteet: IS, IL, Jatkoaika ja Savon Sanomat. Ei Google Newsia.
+Viisi uutislähdettä: IS, IL, Jatkoaika, Savon Sanomat ja Liiga.fi.
 
-## Mitä korjattiin
-- `/api/news` näyttää jokaisesta lähteestä `scanned` (RSS:n kaikki artikkelit), `publisher_links` (hyväksytyt artikkelilinkit) ja `count` (KalPa-osumat).
-- Löytyneet KalPa-uutiset säilyvät SQLite-historiassa 30 päivää viimeisestä esiintymisestä syötteessä.
-- HEAD-terveystarkistus palauttaa 200.
-- Nykyinen Savon Sanomien RSS-syöte ja lukutila on säilytetty.
+Liiga.fi luetaan julkiselta uutislistaussivulta HTML-linkkien perusteella. Koska sivusto on JavaScript-pohjainen, lähde voi näyttää `empty` eikä uutisten löytymistä voi taata. Lähteen diagnostiikka näkyy `/api/news`-vastauksen `sources["Liiga.fi"]`-kohdassa.
 
-## Tärkeät rajoitukset
-- IS:n ja IL:n tuoreimmat-RSS:t voivat sisältää 0 KalPa-uutista. Tämä versio ei väitä korjaavansa lähteiden kattavuutta.
-- Jatkoajan HTTP 403 ei ratkea ilman toimivaa, sallittua syötettä tai käyttöoikeutta.
-- Renderin ilmaisinstanssin paikallinen SQLite-tietokanta **ei säily luotettavasti uudelleenkäynnistyksissä tai julkaisuissa**. Pysyvään historiaan tarvitaan ulkoinen tietokanta.
-- Artikkelien kokotekstit eivät ole taattuja. Maksumuureja tai pääsynrajoituksia ei kierretä.
+IS:n 100 luettua uutista ilman KalPa-osumia, IL:n 0 luettua uutista ja Jatkoajan HTTP 403 ovat erillisiä ratkaisemattomia lähdeongelmia. Savon Sanomien RSS säilyy ennallaan.
 
 ## Päivitys
-Vie paketin viisi tiedostoa GitHubin KalPa365-repositorion juureen, korvaa vanhat ja odota Renderin Live-tilaa. Start Command: `python KalPa365_palvelin.py`. Tarkista `https://kalpa365.onrender.com/api/news`.
+Lataa ZIP-tiedoston viisi tiedostoa olemassa olevaan KalPa365-GitHub-projektiin. Render start command: `python KalPa365_palvelin.py`.
+
+Renderin ilmaisversion paikallinen SQLite-historia voi kadota uudelleenkäynnistyksessä.

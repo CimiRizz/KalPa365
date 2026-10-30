@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""KalPa365 v1.4 — direct RSS, diagnostics and rolling article history."""
+"""KalPa365 v1.5 — RSS + Liiga.fi, diagnostics and rolling article history."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
-from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote
+from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
@@ -26,7 +26,7 @@ FEEDS = {
 # Lähteen mahdollinen virhe näkyy /api/news-vastauksen sources-kentässä.
 POSITIVE = re.compile(r'(?<!\w)kalpa(?:n|lle|lta|ssa|sta|an|a)?(?!\w)|kuopion\s+kalpa', re.I)
 NEGATIVE = re.compile(r'kalpa(?:na|lla)?\s+(?:ruoka|esine|kukka)|kalpa\s+miekk', re.I)
-ALLOWED_PUBLISHERS = ('is.fi','iltalehti.fi','jatkoaika.com','savonsanomat.fi')
+ALLOWED_PUBLISHERS = ('is.fi','iltalehti.fi','jatkoaika.com','savonsanomat.fi','liiga.fi')
 
 def allowed_publisher(url):
     p=urlparse(url)
@@ -93,12 +93,66 @@ def fetch(source, urls):
             failures.append(f'{type(exc).__name__}: {str(exc)[:100]}')
     return [],{'status':'error','count':0,'message':' | '.join(failures)}
 
+
+# Liiga.fi does not advertise a verified RSS feed. Extract only public news links
+# present in the server response; never invent articles or bypass access controls.
+LIIGA_NEWS = 'https://liiga.fi/fi/uutiset?kategoria=uusimmat'
+
+class LiigaLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links=[]; self.current=None
+    def handle_starttag(self, tag, attrs):
+        if tag != 'a': return
+        attrs=dict(attrs); href=attrs.get('href','')
+        target=urljoin('https://liiga.fi',href)
+        if urlparse(target).hostname in ('liiga.fi','www.liiga.fi') and re.match(r'^/fi/uutiset/[^/?#]+',urlparse(target).path):
+            self.current={'url':target.split('?')[0], 'parts':[]}
+    def handle_data(self, data):
+        if self.current is not None: self.current['parts'].append(data)
+    def handle_endtag(self, tag):
+        if tag=='a' and self.current is not None:
+            title=strip_markup(' '.join(self.current['parts']))
+            if title: self.links.append((title,self.current['url']))
+            self.current=None
+
+def fetch_liiga():
+    try:
+        req=Request(LIIGA_NEWS,headers={'User-Agent':'KalPa365/1.5 (+public news index)', 'Accept':'text/html'})
+        with urlopen(req,timeout=12) as response:
+            if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
+            raw=response.read(2_000_001)
+            if len(raw)>2_000_000: raise ValueError('Page too large')
+            decoded=raw.decode(response.headers.get_content_charset() or 'utf-8','replace')
+        parser=LiigaLinkParser(); parser.feed(decoded)
+        # Some SPA pages embed news records as JSON rather than visible anchors.
+        for match in re.finditer(r'(?P<url>/fi/uutiset/[a-zA-Z0-9_\-%]+)', decoded):
+            url=urljoin('https://liiga.fi',html.unescape(match.group('url')))
+            around=decoded[max(0,match.start()-450):min(len(decoded),match.end()+450)]
+            titles=re.findall(r'"(?:title|headline|name)"\s*:\s*"([^"\\]{8,220})"',around)
+            for title in titles:
+                parser.links.append((strip_markup(title),url))
+        results=[]; seen=set()
+        for title,url in parser.links:
+            if url in seen: continue
+            seen.add(url)
+            if not POSITIVE.search(title) or NEGATIVE.search(title): continue
+            results.append({'title':title,'source':'Liiga.fi','url':url,'summary':'',
+                            'timestamp':time.time(),'published':''})
+        return results, {'status':'ok' if parser.links else 'empty', 'count':len(results),
+                         'scanned':len(seen),'publisher_links':len(seen),'feed':LIIGA_NEWS,
+                         'note':'Liiga.fi news links found in public page HTML; JavaScript-only articles may not appear.'}
+    except Exception as exc:
+        return [], {'status':'error','count':0,'scanned':0,'message':f'{type(exc).__name__}: {str(exc)[:140]}'}
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
         items=[]; sources={}
         for source,urls in FEEDS.items():
             result,info=fetch(source,urls); items.extend(result); sources[source]=info
+        liiga_result, liiga_info = fetch_liiga()
+        items.extend(liiga_result); sources['Liiga.fi'] = liiga_info
         seen=set(); unique=[]
         for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
             key=item['url'].split('?')[0].rstrip('/')
