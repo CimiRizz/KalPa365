@@ -1,17 +1,11 @@
-KalPa365 2.1 — Liiga.fi:n uutisdatan poiminta
+KalPa365 2.2 — Liiga.fi JSON API
 
-Korvaa GitHubissa KalPa365_palvelin.py. Muut tiedostot pysyvät samoina.
+Löydetty käyttäjän Firefox HAR -tallenteesta 30.10.2026:
+https://liiga.fi/api/v2/news?limitRequest=16&offsetRequest=0&builderOffsetRequest=0&legacyOffsetRequest=0
 
-Uusi poiminta:
-- Liigan uutisluettelo ja etusivu
-- julkiset HTML-artikkelilinkit
-- sivuun upotettu JSON (application/json ja JSON-LD)
-- diagnostiset html_links, json_records, json_scripts, bytes /api/news → sources → Liiga.fi → pages
+Korvaa GitHubissa KalPa365_palvelin.py ja tee Commit. Muut tiedostot ennallaan.
+Render Live → https://kalpa365.onrender.com/api/news
+Tarkista sources → Liiga.fi → pages: status, scanned, matches, bytes.
 
-HUOM. Tämä on kokeellinen poiminta: Liigan julkisen sivun todellista HTML-vastausta
-Render-ympäristössä ei ole vielä tarkistettu. Nolla tulosta voi tarkoittaa,
-että uutiset tulevat erillisestä verkkopyynnöstä. Tässä versiossa ei arvata API-osoitetta.
-
-Jos edelleen 0: selaimen F12 → Network → Fetch/XHR → päivitä Liigan uutiset -sivu
-ja kopioi uutislistan palauttavan pyynnön URL ja vastausrakenteen esimerkki.
-Älä lähetä evästeitä tai kirjautumistunnuksia.
+Koodin syntaksi on tarkistettu. Renderistä tehtyä API-kutsua ei ole vielä testattu.
+API:n rakenne tai sivutus voi muuttua. Haku kattaa enintään viisi 16 artikkelin sivua.

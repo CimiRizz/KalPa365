@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.1 — direct source discovery and reader."""
+"""KalPa365 v2.2 — direct source discovery and reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -367,46 +367,83 @@ def extract_liiga_news(document):
     return results, {'html_links': len(parser.links), 'json_records': json_count,
                      'json_scripts': len(parser.scripts)}
 
-def fetch_liiga_news():
-    all_news, seen, diagnostics = [], set(), []
-    for page in LIIGA_NEWS_PAGES:
+def liiga_date(value):
+    """Parse the observed Liiga newsDate format, including GMT offset."""
+    if not isinstance(value, str):
+        return 0
+    match = re.search(r'^(?:\w{3} )?(\w{3} \d{1,2} \d{4} \d\d:\d\d:\d\d GMT[+-]\d{4})', value)
+    if match:
         try:
-            req = Request(page, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.1)',
-                'Accept': 'text/html'
+            return datetime.strptime(match.group(1), '%b %d %Y %H:%M:%S GMT%z').timestamp()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return 0
+
+def fetch_liiga_news():
+    """Public /api/v2/news observed in Firefox HAR on 2026-10-30."""
+    endpoint = 'https://liiga.fi/api/v2/news'
+    found, seen, diagnostics = [], set(), []
+    for offset in (0, 16, 32, 48, 64):
+        params = {'limitRequest': 16, 'offsetRequest': offset,
+                  'builderOffsetRequest': offset, 'legacyOffsetRequest': offset}
+        url = endpoint + '?' + urlencode(params)
+        try:
+            request = Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.2)',
+                'Accept': 'application/json',
+                'Referer': 'https://liiga.fi/fi/uutiset?kategoria=uusimmat'
             })
-            with urlopen(req, timeout=12) as response:
+            with urlopen(request, timeout=12) as response:
                 if not allowed_publisher(response.geturl()):
                     raise ValueError('Unexpected redirect')
                 raw = response.read(2_000_001)
                 if len(raw) > 2_000_000:
-                    raise ValueError('Page too large')
-                document = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
-            records, details = extract_liiga_news(document)
-            for title, link in records:
-                if link in seen:
+                    raise ValueError('JSON response too large')
+            payload = json.loads(raw.decode('utf-8-sig'))
+            records = payload.get('articles', [])
+            if not isinstance(records, list):
+                raise ValueError('Expected articles list')
+            matches = 0
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                title = strip_markup(str(record.get('articleTitle') or record.get('title') or ''))
+                link = liiga_news_url(record.get('url', ''))
+                if not title or not link or link in seen:
                     continue
                 seen.add(link)
-                if POSITIVE.search(title) and not NEGATIVE.search(title):
-                    all_news.append({
-                        'title': title, 'source': 'Liiga.fi', 'url': link,
-                        'summary': '', 'timestamp': 0, 'published': ''
-                    })
-            diagnostics.append({'page': page, 'status': 'ok',
-                                'scanned': len(records), **details,
-                                'bytes': len(raw)})
+                # The API's searchText can contain an unrelated mention deep in an article.
+                # Prioritize title and article lead, not arbitrary whole-article references.
+                lead = strip_markup(str(record.get('ingress') or record.get('summary') or ''))
+                snippet = str(record.get('searchText') or '')[:350]
+                if not POSITIVE.search(' '.join((title, lead, snippet))):
+                    continue
+                if NEGATIVE.search(title):
+                    continue
+                timestamp = liiga_date(record.get('newsDate') or record.get('published') or '')
+                if timestamp and timestamp < time.time() - HISTORY_DAYS * 86400:
+                    continue
+                found.append({'title': title, 'source': 'Liiga.fi', 'url': link,
+                              'summary': lead[:400], 'timestamp': timestamp,
+                              'published': str(record.get('newsDate') or record.get('published') or '')})
+                matches += 1
+            diagnostics.append({'url': url, 'status': 'ok', 'scanned': len(records),
+                                'matches': matches, 'bytes': len(raw)})
+            if not records:
+                break
         except Exception as exc:
-            diagnostics.append({'page': page, 'status': 'error',
-                                'message': f'{type(exc).__name__}: {str(exc)[:120]}'})
+            diagnostics.append({'url': url, 'status': 'error',
+                                'message': f'{type(exc).__name__}: {str(exc)[:160]}'})
+            break
     success = any(d['status'] == 'ok' for d in diagnostics)
-    return all_news, {
-        'status': 'ok' if success else 'error',
-        'count': len(all_news), 'scanned': len(seen),
-        'publisher_links': len(seen), 'pages': diagnostics,
-        'feed': LIIGA_NEWS_PAGES[0],
-        'note': ('Liiga public HTML/JSON extraction. '
-                 'Zero links means data is absent from the fetched HTML or in another format.')
-    }
+    return found, {'status': 'ok' if success else 'error',
+                   'count': len(found), 'scanned': len(seen),
+                   'publisher_links': len(seen), 'pages': diagnostics,
+                   'feed': endpoint,
+                   'note': 'Direct public Liiga /api/v2/news JSON, identified from browser HAR.'}
 
 def news():
     with LOCK:
