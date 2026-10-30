@@ -21,6 +21,7 @@ FEEDS = {
     'IL': ['https://www.iltalehti.fi/rss/tuoreimmat.xml'],
     'Jatkoaika': ['https://www.jatkoaika.com/rss.xml'],
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
+    'Yle.fi': ['https://yle.fi/rss/uutiset.rss?osasto=urheilu','https://yle.fi/rss/uutiset.rss'],
 }
 # Jatkoajan ja Savon Sanomien syöteosoitteet ovat kokeellisia.
 # Lähteen mahdollinen virhe näkyy /api/news-vastauksen sources-kentässä.
