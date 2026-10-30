@@ -1,17 +1,11 @@
-# KalPa365 v2.4 – Liiga.fi-uutishaku
+# KalPa365 v2.5 — KalPa pääaiheena
 
-Korjaa vain Liiga.fi-uutisten löytämistä. Builder.io-artikkelilukija ja muut lähteet pysyvät ennallaan.
+Tämä versio korjaa Liiga.fi:n uutisvalinnan. Pelkkä KalPa-maininta koko artikkelin `searchText`-kentässä ei enää riitä. Mukaan hyväksytään KalPaan keskittyvät otsikot ja KalPa-aiheiset ingressit tai artikkelin aloituskappaleet. Yleiset Liiga-tiedotteet ja otteluohjelmakoosteet rajataan pois.
 
-- Hakee Liigan julkisesta /api/v2/news-rajapinnasta enintään 20 × 16 = 320 artikkelia (aiemmin 80).
-- Tutkii artikkelin koko searchText-kentän (aiemmin vain 350 ensimmäistä merkkiä), otsikon ja mahdolliset joukkuetunnisteet.
-- Pitää 30 päivän julkaisuaikarajauksen ja päällekkäisten artikkelien poiston.
-- Diagnostiikka: /api/news → sources → Liiga.fi → pages; `scanned`, `within_30_days`, `matches`.
-- Haku voidaan rajata ympäristömuuttujalla KALPA365_LIIGA_PAGES (1–30, oletus 20).
+Muut uutislähteet, Builder.io-artikkelilukija ja 30 päivän uutishistoria säilyvät.
 
 ## Asennus
+Korvaa GitHub-repositorion viisi tiedostoa tämän ZIP:n vastaavilla ja odota Renderin julkaisua. Testaa `/api/news`-osoitteessa Liiga.fi:n `count` ja uutisten otsikot.
 
-Pura ZIP ja korvaa GitHubin KalPa365-repositorion vastaavat viisi tiedostoa. Render julkaisee uuden version.
-
-## Huomio
-
-Paikalliset testit käyttävät simuloituja API-vastauksia. Julkisen Liiga-rajapinnan todellinen tulos pitää tarkistaa Renderissä.
+## Testaus
+Python-syntaksi ja kuusi paikallista relevanssitestiä läpäisty. Live-Render-testin tulos selviää vasta julkaisun jälkeen.

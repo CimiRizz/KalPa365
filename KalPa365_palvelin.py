@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.4 — extended Liiga discovery and Builder.io reader."""
+"""KalPa365 v2.5 — KalPa-focused Liiga discovery and Builder.io reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -382,26 +382,51 @@ def liiga_date(value):
     except ValueError:
         return 0
 
-def liiga_team_mention(record):
-    """Match KalPa in complete searchable article text and explicit team metadata."""
-    parts = []
-    for key in ('articleTitle', 'title', 'ingress', 'summary', 'searchText', 'description'):
-        value = record.get(key)
-        if isinstance(value, str):
-            parts.append(value)
-    # The public news API can expose structured tags/teams in addition to text.
-    # Only accept exact KalPa names; never infer a team from an opaque numeric ID.
-    for key in ('teams', 'team', 'tags', 'keywords', 'categories'):
-        value = record.get(key)
-        if isinstance(value, str):
-            parts.append(value)
-        elif isinstance(value, (list, dict)):
-            parts.append(json.dumps(value, ensure_ascii=False))
-    return bool(POSITIVE.search(' '.join(parts)))
+def liiga_kalpa_main_topic(record):
+    """Accept articles ABOUT KalPa, not general Liiga stories mentioning KalPa.
+
+    A clear KalPa headline is the strongest signal. A lead paragraph may qualify
+    when it explicitly focuses on KalPa, but a long fixture list or a generic
+    league-wide announcement does not qualify just because KalPa appears in it.
+    """
+    title = strip_markup(str(record.get('articleTitle') or record.get('title') or ''))
+    if NEGATIVE.search(title):
+        return False
+    title_has_kalpa = bool(POSITIVE.search(title))
+    title_generic = bool(re.search(
+        r'\b(?:liiga\s+tiedottaa|otteluohjelma|ottelusiir(?:to|rot|roista)|'
+        r'kaikkien\s+joukkueiden|liigan\s+(?:viikon\s+)?(?:ottelut|uutiset|ottelukierros)|'
+        r'kooste|siirrot\s+ja\s+muutokset)\b', title, re.I))
+    if title_has_kalpa and not title_generic:
+        return True
+    lead = strip_markup(str(record.get('ingress') or record.get('summary') or
+                            record.get('description') or ''))
+    body = str(record.get('searchText') or '')
+    # Some Liiga records have no separate ingress. Only the opening paragraph
+    # is used as a lead; never search the full article for relevance.
+    if not lead:
+        lead = strip_markup(body.split('\n\n', 1)[0][:350])
+    lead_has_kalpa = bool(POSITIVE.search(lead))
+    # General league notices and fixture lists often name many clubs. Exclude
+    # them unless KalPa is unmistakably the headline subject.
+    if title_generic:
+        return False
+    if not lead_has_kalpa:
+        return False
+    # Avoid accepting a multi-team roundup with an incidental KalPa reference.
+    other_teams = re.findall(
+        r'\b(?:HIFK|HPK|Ilves|Jukurit|JYP|K-?Espoo|Kärpät|Lukko|'
+        r'Pelicans|SaiPa|Sport|Tappara|TPS|Ässät)\b', lead, re.I)
+    if len(set(x.lower() for x in other_teams)) >= 3:
+        return False
+    # If the headline does not mention KalPa, require a KalPa-focused lead,
+    # not merely a team listed in a score or fixture line.
+    return bool(re.search(r'\b(?:KalPa|KalPan|KalPaa|KalPalle|KalPassa|KalPasta|'
+                          r'Kuopion\s+KalPa)\b', lead, re.I))
 
 
 def fetch_liiga_news():
-    """Page through the public Liiga news API and inspect the full searchText."""
+    """Page through Liiga news and keep only KalPa-focused articles."""
     endpoint = 'https://liiga.fi/api/v2/news'
     found, seen, diagnostics = [], set(), []
     # Previously only 80 articles were scanned, and searchText was cut to 350 chars.
@@ -442,7 +467,7 @@ def fetch_liiga_news():
                 if timestamp and timestamp < cutoff:
                     continue
                 relevant += 1
-                if not liiga_team_mention(record) or NEGATIVE.search(title):
+                if not liiga_kalpa_main_topic(record):
                     continue
                 lead = strip_markup(str(record.get('ingress') or record.get('summary') or ''))
                 if not lead:
@@ -465,7 +490,7 @@ def fetch_liiga_news():
                    'count': len(found), 'scanned': len(seen),
                    'publisher_links': len(seen), 'pages': diagnostics,
                    'feed': endpoint, 'search_pages': len(diagnostics),
-                   'note': 'Full searchText + team metadata, up to 320 news records / 30-day filter.'}
+                   'note': 'KalPa main-topic filter (headline/lead), up to 320 records / 30-day filter.'}
 
 def news():
     with LOCK:
