@@ -78,9 +78,23 @@ def fetch(source, urls):
                 if local(item.tag) not in ('item','entry'): continue
                 scanned += 1
                 title=strip_markup(child_text(item,{'title'}))
-                link=child_text(item,{'link'})
-                if not link:
-                    link=next((c.attrib['href'] for c in item if local(c.tag)=='link' and c.attrib.get('href')), '')
+                link = child_text(item, {'link'})
+                    if not link:
+                                for c in item:
+                    if local(c.tag) == 'link':
+                                href = c.attrib.get('href', '').strip()
+                    if href and c.attrib.get('rel', 'alternate') == 'alternate':
+                            link = href
+                    break
+
+if source == 'Yle.fi':
+    print(
+        f"YLE RSS: title={title[:60]!r}, "
+        f"link={link!r}, "
+        f"allowed={allowed_publisher(link)}",
+        flush=True
+    )
+
                 summary=strip_markup(child_text(item,{'description','summary','encoded','content'}))
                 if not title or not allowed_publisher(link): continue
                 publisher_links += 1
