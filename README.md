@@ -1,11 +1,17 @@
-KalPa365 2.2 — Liiga.fi JSON API
+# KalPa365 v2.4 – Liiga.fi-uutishaku
 
-Löydetty käyttäjän Firefox HAR -tallenteesta 30.10.2026:
-https://liiga.fi/api/v2/news?limitRequest=16&offsetRequest=0&builderOffsetRequest=0&legacyOffsetRequest=0
+Korjaa vain Liiga.fi-uutisten löytämistä. Builder.io-artikkelilukija ja muut lähteet pysyvät ennallaan.
 
-Korvaa GitHubissa KalPa365_palvelin.py ja tee Commit. Muut tiedostot ennallaan.
-Render Live → https://kalpa365.onrender.com/api/news
-Tarkista sources → Liiga.fi → pages: status, scanned, matches, bytes.
+- Hakee Liigan julkisesta /api/v2/news-rajapinnasta enintään 20 × 16 = 320 artikkelia (aiemmin 80).
+- Tutkii artikkelin koko searchText-kentän (aiemmin vain 350 ensimmäistä merkkiä), otsikon ja mahdolliset joukkuetunnisteet.
+- Pitää 30 päivän julkaisuaikarajauksen ja päällekkäisten artikkelien poiston.
+- Diagnostiikka: /api/news → sources → Liiga.fi → pages; `scanned`, `within_30_days`, `matches`.
+- Haku voidaan rajata ympäristömuuttujalla KALPA365_LIIGA_PAGES (1–30, oletus 20).
 
-Koodin syntaksi on tarkistettu. Renderistä tehtyä API-kutsua ei ole vielä testattu.
-API:n rakenne tai sivutus voi muuttua. Haku kattaa enintään viisi 16 artikkelin sivua.
+## Asennus
+
+Pura ZIP ja korvaa GitHubin KalPa365-repositorion vastaavat viisi tiedostoa. Render julkaisee uuden version.
+
+## Huomio
+
+Paikalliset testit käyttävät simuloituja API-vastauksia. Julkisen Liiga-rajapinnan todellinen tulos pitää tarkistaa Renderissä.

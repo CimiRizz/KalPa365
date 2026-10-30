@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.3 — direct source discovery and reader."""
+"""KalPa365 v2.4 — extended Liiga discovery and Builder.io reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -382,17 +382,40 @@ def liiga_date(value):
     except ValueError:
         return 0
 
+def liiga_team_mention(record):
+    """Match KalPa in complete searchable article text and explicit team metadata."""
+    parts = []
+    for key in ('articleTitle', 'title', 'ingress', 'summary', 'searchText', 'description'):
+        value = record.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    # The public news API can expose structured tags/teams in addition to text.
+    # Only accept exact KalPa names; never infer a team from an opaque numeric ID.
+    for key in ('teams', 'team', 'tags', 'keywords', 'categories'):
+        value = record.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, (list, dict)):
+            parts.append(json.dumps(value, ensure_ascii=False))
+    return bool(POSITIVE.search(' '.join(parts)))
+
+
 def fetch_liiga_news():
-    """Public /api/v2/news observed in Firefox HAR on 2026-10-30."""
+    """Page through the public Liiga news API and inspect the full searchText."""
     endpoint = 'https://liiga.fi/api/v2/news'
     found, seen, diagnostics = [], set(), []
-    for offset in (0, 16, 32, 48, 64):
-        params = {'limitRequest': 16, 'offsetRequest': offset,
+    # Previously only 80 articles were scanned, and searchText was cut to 350 chars.
+    # Scan up to 320 articles, retaining the existing 30-day publication filter.
+    page_size = 16
+    max_pages = max(1, min(30, int(os.environ.get('KALPA365_LIIGA_PAGES', '20'))))
+    cutoff = time.time() - HISTORY_DAYS * 86400
+    for offset in range(0, page_size * max_pages, page_size):
+        params = {'limitRequest': page_size, 'offsetRequest': offset,
                   'builderOffsetRequest': offset, 'legacyOffsetRequest': offset}
         url = endpoint + '?' + urlencode(params)
         try:
             request = Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.2)',
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.4)',
                 'Accept': 'application/json',
                 'Referer': 'https://liiga.fi/fi/uutiset?kategoria=uusimmat'
             })
@@ -403,10 +426,10 @@ def fetch_liiga_news():
                 if len(raw) > 2_000_000:
                     raise ValueError('JSON response too large')
             payload = json.loads(raw.decode('utf-8-sig'))
-            records = payload.get('articles', [])
+            records = payload.get('articles', []) if isinstance(payload, dict) else []
             if not isinstance(records, list):
                 raise ValueError('Expected articles list')
-            matches = 0
+            matches, relevant = 0, 0
             for record in records:
                 if not isinstance(record, dict):
                     continue
@@ -415,24 +438,23 @@ def fetch_liiga_news():
                 if not title or not link or link in seen:
                     continue
                 seen.add(link)
-                # The API's searchText can contain an unrelated mention deep in an article.
-                # Prioritize title and article lead, not arbitrary whole-article references.
-                lead = strip_markup(str(record.get('ingress') or record.get('summary') or ''))
-                snippet = str(record.get('searchText') or '')[:350]
-                if not POSITIVE.search(' '.join((title, lead, snippet))):
-                    continue
-                if NEGATIVE.search(title):
-                    continue
                 timestamp = liiga_date(record.get('newsDate') or record.get('published') or '')
-                if timestamp and timestamp < time.time() - HISTORY_DAYS * 86400:
+                if timestamp and timestamp < cutoff:
                     continue
+                relevant += 1
+                if not liiga_team_mention(record) or NEGATIVE.search(title):
+                    continue
+                lead = strip_markup(str(record.get('ingress') or record.get('summary') or ''))
+                if not lead:
+                    body = str(record.get('searchText') or '')
+                    lead = strip_markup(body[:280])
                 found.append({'title': title, 'source': 'Liiga.fi', 'url': link,
                               'summary': lead[:400], 'timestamp': timestamp,
                               'published': str(record.get('newsDate') or record.get('published') or '')})
                 matches += 1
             diagnostics.append({'url': url, 'status': 'ok', 'scanned': len(records),
-                                'matches': matches, 'bytes': len(raw)})
-            if not records:
+                                'within_30_days': relevant, 'matches': matches, 'bytes': len(raw)})
+            if len(records) < page_size:
                 break
         except Exception as exc:
             diagnostics.append({'url': url, 'status': 'error',
@@ -442,8 +464,8 @@ def fetch_liiga_news():
     return found, {'status': 'ok' if success else 'error',
                    'count': len(found), 'scanned': len(seen),
                    'publisher_links': len(seen), 'pages': diagnostics,
-                   'feed': endpoint,
-                   'note': 'Direct public Liiga /api/v2/news JSON, identified from browser HAR.'}
+                   'feed': endpoint, 'search_pages': len(diagnostics),
+                   'note': 'Full searchText + team metadata, up to 320 news records / 30-day filter.'}
 
 def news():
     with LOCK:
