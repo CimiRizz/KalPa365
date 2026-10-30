@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v1.8 — improved article reader."""
+"""KalPa365 v1.9 — improved multi-feed diagnostics."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -17,14 +17,21 @@ HISTORY_DAYS = 30
 LOCK = threading.Lock()
 CACHE = {'at': 0, 'data': None}
 FEEDS = {
-    'IS': ['https://www.is.fi/rss/tuoreimmat.xml'],
-    'IL': ['https://www.iltalehti.fi/rss/tuoreimmat.xml'],
+    'IS': [
+        'https://www.is.fi/rss/tuoreimmat.xml',
+    ],
+    'IL': [
+        'https://www.iltalehti.fi/rss.xml',
+        'https://www.iltalehti.fi/rss/uutiset.xml',
+    ],
     'Jatkoaika': ['https://www.jatkoaika.com/rss.xml'],
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
-    'Yle.fi': ['https://yle.fi/rss/urheilu','https://yle.fi/rss/tuoreimmat'
-],
-
+    'Yle.fi': [
+        'https://yle.fi/rss/urheilu',
+        'https://yle.fi/rss/tuoreimmat',
+    ],
 }
+
 # Jatkoajan ja Savon Sanomien syöteosoitteet ovat kokeellisia.
 # Lähteen mahdollinen virhe näkyy /api/news-vastauksen sources-kentässä.
 POSITIVE = re.compile(r'(?<!\w)kalpa(?:n|lle|lta|ssa|sta|an|a)?(?!\w)|kuopion\s+kalpa', re.I)
@@ -72,48 +79,91 @@ def history_merge(fresh):
     except (OSError, sqlite3.Error) as exc:
         return fresh, f'unavailable: {type(exc).__name__}'
 
+def parse_feed(source, raw):
+    root = ET.fromstring(raw)
+    results, scanned, publisher_links = [], 0, 0
+    for item in root.iter():
+        if local(item.tag) not in ('item', 'entry'):
+            continue
+        scanned += 1
+        title = strip_markup(child_text(item, {'title'}))
+        link = child_text(item, {'link'})
+        if not link:
+            for child in item:
+                if local(child.tag) == 'link' and child.attrib.get('href'):
+                    if child.attrib.get('rel', 'alternate') == 'alternate':
+                        link = child.attrib['href'].strip()
+                        break
+        summary = strip_markup(child_text(item, {'description', 'summary', 'encoded', 'content'}))
+        if not title or not allowed_publisher(link):
+            continue
+        publisher_links += 1
+        if not POSITIVE.search(title + ' ' + summary) or NEGATIVE.search(title):
+            continue
+        pub = child_text(item, {'pubdate', 'published', 'updated', 'date'})
+        try:
+            stamp = parsedate_to_datetime(pub).timestamp()
+        except Exception:
+            try:
+                stamp = datetime.fromisoformat(pub.replace('Z', '+00:00')).timestamp()
+            except Exception:
+                stamp = 0
+        results.append({
+            'title': title, 'source': source, 'url': link,
+            'summary': summary[:500], 'timestamp': stamp, 'published': pub
+        })
+    return results, scanned, publisher_links
+
+
 def fetch(source, urls):
-    failures=[]
+    # Read *all* available feeds. A valid but empty feed must not mask
+    # later feeds, and one broken feed must not suppress successful feeds.
+    collected, seen = [], set()
+    diagnostics = []
+    total_scanned = total_links = 0
+    success = 0
     for url in urls:
         try:
-            req=Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365/1.3)','Accept':'application/rss+xml, application/xml, text/xml, */*'})
-            with urlopen(req,timeout=12) as response:
-                raw=response.read(2_000_001)
-                if len(raw)>2_000_000: raise ValueError('Feed too large')
-            root=ET.fromstring(raw)
-            results=[]; scanned=0; publisher_links=0
-            for item in root.iter():
-                if local(item.tag) not in ('item','entry'): continue
-                scanned += 1
-                
-                title = strip_markup(child_text(item, {'title'}))
-                link = child_text(item, {'link'})
-
-                if not link:
-                    for c in item:
-                        if local(c.tag) == 'link':
-                            href = c.attrib.get('href', '').strip()
-                            if href and c.attrib.get('rel', 'alternate') == 'alternate':
-                                link = href
-                                break
-
-                summary = strip_markup(
-                    child_text(item, {'description', 'summary', 'encoded', 'content'})
-                )
-
-                if not title or not allowed_publisher(link): continue
-                publisher_links += 1
-                if not POSITIVE.search(title+' '+summary) or NEGATIVE.search(title): continue
-                pub=child_text(item,{'pubdate','published','updated','date'})
-                try: stamp=parsedate_to_datetime(pub).timestamp()
-                except Exception:
-                    try: stamp=datetime.fromisoformat(pub.replace('Z','+00:00')).timestamp()
-                    except Exception: stamp=0
-                results.append({'title':title,'source':source,'url':link,'summary':summary[:500], 'timestamp':stamp,'published':pub})
-            return results, {'status':'ok','count':len(results),'scanned':scanned,'publisher_links':publisher_links,'feed':url}
+            req = Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/1.9)',
+                'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+            })
+            with urlopen(req, timeout=12) as response:
+                raw = response.read(2_000_001)
+                if len(raw) > 2_000_000:
+                    raise ValueError('Feed too large')
+            items, scanned, links = parse_feed(source, raw)
+            success += 1
+            total_scanned += scanned
+            total_links += links
+            for item in items:
+                key = item['url'].split('?')[0].rstrip('/')
+                if key not in seen:
+                    seen.add(key)
+                    collected.append(item)
+            diagnostics.append({
+                'feed': url, 'status': 'ok', 'scanned': scanned,
+                'publisher_links': links, 'count': len(items)
+            })
         except Exception as exc:
-            failures.append(f'{type(exc).__name__}: {str(exc)[:100]}')
-    return [],{'status':'error','count':0,'message':' | '.join(failures)}
+            diagnostics.append({
+                'feed': url, 'status': 'error',
+                'message': f'{type(exc).__name__}: {str(exc)[:140]}'
+            })
+    info = {
+        'status': 'ok' if success else 'error',
+        'count': len(collected),
+        'scanned': total_scanned,
+        'publisher_links': total_links,
+        'feeds': diagnostics,
+    }
+    # Keep the old single-feed field for compatibility with the UI.
+    info['feed'] = next((d['feed'] for d in diagnostics if d['status'] == 'ok'), urls[0] if urls else '')
+    if not success:
+        info['message'] = ' | '.join(d['message'] for d in diagnostics if d['status'] == 'error')
+    elif any(d['status'] == 'error' for d in diagnostics):
+        info['warning'] = 'Some feeds failed; see feeds'
+    return collected, info
 
 
 # Liiga.fi does not advertise a verified RSS feed. Extract only public news links
