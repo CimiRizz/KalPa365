@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v1.5 — RSS + Liiga.fi, diagnostics and rolling article history."""
+"""KalPa365 v1.8 — improved article reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -101,15 +101,6 @@ def fetch(source, urls):
                     child_text(item, {'description', 'summary', 'encoded', 'content'})
                 )
 
-                if source == 'Yle.fi':
-                    print(
-                        f"YLE RSS: title={title[:60]!r}, "
-                        f"link={link!r}, "
-                        f"allowed={allowed_publisher(link)}",
-                        flush=True
-                    )
-
-                summary=strip_markup(child_text(item,{'description','summary','encoded','content'}))
                 if not title or not allowed_publisher(link): continue
                 publisher_links += 1
                 if not POSITIVE.search(title+' '+summary) or NEGATIVE.search(title): continue
@@ -196,34 +187,63 @@ def news():
         return data
 
 class ReaderParser(HTMLParser):
+    """Collect public article paragraphs and JSON-LD NewsArticle content."""
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.stack=[]; self.paragraphs=[]; self.parts=None; self.depth=0
-        self.article_depth=0; self.in_article=False
-    def handle_starttag(self, tag, attrs):
-        attrs=dict(attrs); parent=self.stack[-1] if self.stack else (False,False)
-        excluded=parent[0] or tag in ('script','style','nav','footer','aside','form','noscript','svg','iframe','button')
-        marker=' '.join(str(attrs.get(k,'')) for k in ('class','id','role'))
-        article=parent[1] or tag=='article' or bool(re.search(r'article[-_ ]?(body|content|text)|story[-_ ]?body',marker,re.I))
-        if tag=='p' and article and not excluded and self.parts is None:
-            self.parts=[]; self.depth=len(self.stack)
-        if tag not in ('meta','link','img','br','hr','input','source','wbr'):
-            self.stack.append((excluded,article))
+        self.stack=[]; self.paragraphs=[]; self.current=None
+        self.json_scripts=[]; self.script_parts=None
+    def handle_starttag(self,tag,attrs):
+        attrs=dict(attrs)
+        parent=self.stack[-1] if self.stack else (False,False)
+        marker=' '.join(str(attrs.get(k,'')) for k in ('class','id','role','data-testid'))
+        excluded=parent[0] or tag in ('script','style','nav','footer','aside','form','noscript','svg','iframe','button','header') or bool(re.search(r'related|recommend|advert|promo|share|caption|cookie|paywall',marker,re.I))
+        article=parent[1] or tag=='article' or bool(re.search(r'article|story[-_ ]?body|article[-_ ]?(body|content|text)',marker,re.I))
+        if tag=='script' and attrs.get('type','').lower()=='application/ld+json': self.script_parts=[]
+        if tag in ('p','h2','h3','blockquote') and article and not excluded and self.current is None:
+            self.current={'tag':tag,'parts':[]}
+        if tag not in ('meta','link','img','br','hr','input','source','wbr','area','embed'):
+            self.stack.append((excluded,article,tag))
+    def handle_startendtag(self,tag,attrs): pass
     def handle_data(self,data):
-        if self.parts is not None and self.stack and not self.stack[-1][0]: self.parts.append(data)
+        if self.script_parts is not None: self.script_parts.append(data)
+        if self.current is not None and self.stack and not self.stack[-1][0]: self.current['parts'].append(data)
     def handle_endtag(self,tag):
-        if tag=='p' and self.parts is not None:
-            value=' '.join(''.join(self.parts).split())
-            if len(value)>55 and not re.match(r'^(?:Lue myös|Katso myös|Kuva:|Mainos|Suosittelemme)',value,re.I):
+        if tag=='script' and self.script_parts is not None:
+            self.json_scripts.append(''.join(self.script_parts)); self.script_parts=None
+        if self.current is not None and tag==self.current['tag']:
+            value=' '.join(''.join(self.current['parts']).split())
+            if len(value)>35 and not re.match(r'^(?:Lue myös|Katso myös|Kuva:|Mainos|Suosittelemme|Jaa artikkeli)',value,re.I):
                 self.paragraphs.append(value)
-            self.parts=None
-        if self.stack:self.stack.pop()
+            self.current=None
+        for i in range(len(self.stack)-1,-1,-1):
+            if self.stack[i][2]==tag:
+                del self.stack[i:]; break
+
+def jsonld_paragraphs(scripts):
+    bodies=[]
+    def visit(obj):
+        if isinstance(obj,list):
+            for v in obj: visit(v)
+        elif isinstance(obj,dict):
+            types=obj.get('@type',[])
+            if isinstance(types,str): types=[types]
+            if any(str(t).lower() in ('newsarticle','article','reportagenewsarticle') for t in types):
+                body=obj.get('articleBody')
+                if isinstance(body,str) and body.strip(): bodies.append(body)
+            for k in ('@graph','mainEntity'):
+                if k in obj: visit(obj[k])
+    for script in scripts:
+        try: visit(json.loads(script))
+        except (ValueError,TypeError): pass
+    if not bodies: return []
+    body=max(bodies,key=len)
+    return [x.strip() for x in re.split(r'\n\s*\n',html.unescape(body)) if len(x.strip())>35]
 
 def article_for(original):
     if original not in {a['url'] for a in news()['articles']}:
         raise ValueError('Article not in current feed')
     if not allowed_publisher(original): raise ValueError('Publisher not allowed')
-    req=Request(original,headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365Reader/1.3)','Accept':'text/html'})
+    req=Request(original,headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365Reader/1.8)','Accept':'text/html'})
     with urlopen(req,timeout=12) as response:
         if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
         if 'html' not in response.headers.get('Content-Type','text/html'): raise ValueError('Not HTML')
@@ -231,10 +251,15 @@ def article_for(original):
         if len(raw)>1_500_000: raise ValueError('Article too large')
         decoded=raw.decode(response.headers.get_content_charset() or 'utf-8','replace')
     parser=ReaderParser(); parser.feed(decoded)
-    paragraphs=list(dict.fromkeys(parser.paragraphs))
-    if len(paragraphs)<3 or sum(map(len,paragraphs))<400:
-        return {'status':'summary','paragraphs':[],'original_url':original,'message':'Kokotekstiä ei ollut saatavilla.'}
-    return {'status':'full','paragraphs':paragraphs[:100],'original_url':original}
+    visible=list(dict.fromkeys(parser.paragraphs))
+    structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
+    paragraphs=max((visible,structured),key=lambda ps:sum(map(len,ps)))
+    if sum(map(len,paragraphs))<250:
+        return {'status':'summary','paragraphs':[],'original_url':original,
+                'message':'Kokotekstiä ei löytynyt julkisesta sivusta.',
+                'debug':{'html_paragraphs':len(visible),'jsonld_paragraphs':len(structured)}}
+    return {'status':'full','paragraphs':paragraphs[:100],'original_url':original,
+            'extraction':'html' if paragraphs is visible else 'jsonld'}
 
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
