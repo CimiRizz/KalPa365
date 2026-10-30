@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.7 — Liiga relevance diagnostics and Builder.io reader."""
+"""KalPa365 v2.9 — Ampparit discovery alongside existing sources."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -44,6 +44,10 @@ ALLOWED_PUBLISHERS = (
     'savonsanomat.fi',
     'liiga.fi',
     'yle.fi',
+    'mtvuutiset.fi', 'sportti.com', 'hs.fi', 'ess.fi',
+    'aamulehti.fi', 'satakunnankansa.fi', 'karjalainen.fi',
+    'hameensanomat.fi', 'keskisuomalainen.fi', 'apu.fi',
+    'helsinginuutiset.fi', 'kaleva.fi', 'kymensanomat.fi',
 )
 
 def allowed_publisher(url):
@@ -526,6 +530,99 @@ def fetch_liiga_news():
                    'feed': endpoint, 'search_pages': len(diagnostics),
                    'note': 'v2.8: accepts concrete KalPa game events inside league roundups; rejects bare historical mentions.'}
 
+class AmpparitHeadlines(HTMLParser):
+    """Read only headline links from public HTML; no article text copied."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.heading_depth = 0
+        self.current_url = None
+        self.parts = []
+        self.headlines = []
+        self.in_anchor = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in ('h3', 'h4') and not self.heading_depth:
+            self.heading_depth = 1
+            self.parts = []
+            self.current_url = None
+        elif self.heading_depth and tag in ('h3', 'h4'):
+            self.heading_depth += 1
+        if self.heading_depth and tag == 'a' and not self.in_anchor:
+            href = html.unescape(attrs.get('href', ''))
+            if href.startswith('//'):
+                href = 'https:' + href
+            if href.startswith('https://') and allowed_publisher(href):
+                self.current_url = href
+                self.in_anchor = True
+
+    def handle_data(self, data):
+        if self.heading_depth and self.in_anchor:
+            self.parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == 'a':
+            self.in_anchor = False
+        if tag in ('h3', 'h4') and self.heading_depth:
+            self.heading_depth -= 1
+            if self.heading_depth == 0:
+                title = strip_markup(' '.join(self.parts))
+                if self.current_url and title:
+                    self.headlines.append((title, self.current_url))
+                self.parts = []
+                self.current_url = None
+
+
+def fetch_ampparit():
+    """Discover KalPa headline links from Ampparit Liiga page.
+
+    Ampparit is a discovery source, never attributed as the publisher.
+    If HTML access is denied, other feeds continue normally.
+    """
+    page = 'https://www.ampparit.com/liiga'
+    try:
+        req = Request(page, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.9; news discovery)',
+            'Accept': 'text/html,application/xhtml+xml',
+        })
+        with urlopen(req, timeout=12) as response:
+            final = urlparse(response.geturl())
+            if final.scheme != 'https' or final.hostname not in ('ampparit.com', 'www.ampparit.com'):
+                raise ValueError('Unexpected redirect')
+            raw = response.read(1_500_001)
+            if len(raw) > 1_500_000:
+                raise ValueError('HTML too large')
+        parser = AmpparitHeadlines()
+        parser.feed(raw.decode('utf-8', errors='replace'))
+        now = time.time()
+        items, seen = [], set()
+        for title, link in parser.headlines[:200]:
+            link = link.split('#', 1)[0]
+            if link in seen or not POSITIVE.search(title) or NEGATIVE.search(title):
+                continue
+            seen.add(link)
+            domain = urlparse(link).hostname or ''
+            publisher = next((name for name, host in (
+                ('IS', 'is.fi'), ('IL', 'iltalehti.fi'), ('Jatkoaika', 'jatkoaika.com'),
+                ('Savon Sanomat', 'savonsanomat.fi'), ('Liiga.fi', 'liiga.fi'),
+                ('Yle.fi', 'yle.fi'), ('MTV Uutiset', 'mtvuutiset.fi'),
+                ('Sportti.com', 'sportti.com'), ('Helsingin Sanomat', 'hs.fi'),
+                ('Etelä-Suomen Sanomat', 'ess.fi'), ('Aamulehti', 'aamulehti.fi'),
+                ('Satakunnan Kansa', 'satakunnankansa.fi'),
+                ('Karjalainen', 'karjalainen.fi'), ('Hämeen Sanomat', 'hameensanomat.fi'),
+                ('Keskisuomalainen', 'keskisuomalainen.fi'), ('Apu', 'apu.fi'),
+            ) if domain == host or domain.endswith('.' + host)), domain)
+            items.append({'title': title, 'source': publisher, 'url': link,
+                          'summary': '', 'timestamp': now, 'published': ''})
+        return items, {'status': 'ok', 'count': len(items),
+                       'scanned': len(parser.headlines), 'publisher_links': len(parser.headlines),
+                       'feed': page,
+                       'note': 'v2.9: public headline discovery; titles with KalPa only; timestamp is discovery time, not publication time.'}
+    except Exception as exc:
+        return [], {'status': 'error', 'count': 0, 'scanned': 0,
+                    'feed': page, 'message': f'{type(exc).__name__}: {str(exc)[:160]}'}
+
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
@@ -536,6 +633,9 @@ def news():
             found, info = fetch_direct(source, pages)
             items.extend(found)
             sources[source] = info
+        ampparit_items, ampparit_info = fetch_ampparit()
+        items.extend(ampparit_items)
+        sources['Ampparit / Liiga'] = ampparit_info
         liiga_items, liiga_info = fetch_liiga_news()
         items.extend(liiga_items)
         sources['Liiga.fi'] = liiga_info
