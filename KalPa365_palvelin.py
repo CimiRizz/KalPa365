@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.6 — KalPa-focused Liiga discovery and Builder.io reader."""
+"""KalPa365 v2.7 — Liiga relevance diagnostics and Builder.io reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -420,6 +420,36 @@ def liiga_kalpa_main_topic(record):
     return True, 'kalpa_in_opening'
 
 
+def liiga_rejection_sample(record, reason):
+    """A short, bounded public metadata preview for reviewing rejected stories.
+
+    No full article text is copied into the diagnostic response.
+    """
+    title = strip_markup(str(record.get('articleTitle') or record.get('title') or ''))
+    lead = strip_markup(str(record.get('ingress') or record.get('summary') or record.get('description') or ''))
+    body = strip_markup(str(record.get('searchText') or ''))
+    # Locate the first KalPa mention without treating it as proof of main-topic relevance.
+    mention = POSITIVE.search(body)
+    context = ''
+    if mention:
+        start = max(0, mention.start() - 85)
+        end = min(len(body), mention.end() + 105)
+        context = ('…' if start else '') + body[start:end] + ('…' if end < len(body) else '')
+    # Inspect only simple, structured metadata fields; avoid exposing raw nested payloads.
+    tags = {}
+    for key in ('team', 'teams', 'teamId', 'teamIds', 'tags', 'categories', 'category'):
+        value = record.get(key)
+        if isinstance(value, str):
+            tags[key] = value[:160]
+        elif isinstance(value, list):
+            tags[key] = [str(x)[:60] for x in value[:5]]
+    return {'title': title[:180], 'url': liiga_news_url(record.get('url', '')),
+            'reason': reason, 'lead': (lead or body)[:220],
+            'kalpa_in_title': bool(POSITIVE.search(title)),
+            'kalpa_in_body': bool(mention), 'mention_context': context,
+            'structured_fields': tags}
+
+
 def fetch_liiga_news():
     """Page through Liiga news and keep only KalPa-focused articles."""
     endpoint = 'https://liiga.fi/api/v2/news'
@@ -451,6 +481,7 @@ def fetch_liiga_news():
                 raise ValueError('Expected articles list')
             matches, relevant = 0, 0
             rejection_reasons = {}
+            rejected_samples = []
             for record in records:
                 if not isinstance(record, dict):
                     continue
@@ -466,6 +497,8 @@ def fetch_liiga_news():
                 accepted, reason = liiga_kalpa_main_topic(record)
                 if not accepted:
                     rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    if len(rejected_samples) < 16:
+                        rejected_samples.append(liiga_rejection_sample(record, reason))
                     continue
                 lead = strip_markup(str(record.get('ingress') or record.get('summary') or ''))
                 if not lead:
@@ -476,7 +509,8 @@ def fetch_liiga_news():
                               'published': str(record.get('newsDate') or record.get('published') or '')})
                 matches += 1
             diagnostics.append({'url': url, 'status': 'ok', 'scanned': len(records),
-                                'within_30_days': relevant, 'matches': matches, 'rejected': rejection_reasons, 'bytes': len(raw)})
+                                'within_30_days': relevant, 'matches': matches, 'rejected': rejection_reasons,
+                                'rejected_samples': rejected_samples, 'bytes': len(raw)})
             if len(records) < page_size:
                 break
         except Exception as exc:
@@ -488,7 +522,7 @@ def fetch_liiga_news():
                    'count': len(found), 'scanned': len(seen),
                    'publisher_links': len(seen), 'pages': diagnostics,
                    'feed': endpoint, 'search_pages': len(diagnostics),
-                   'note': 'v2.6: KalPa headline or first-sentence focus; broad league roundups excluded; see rejected reasons.'}
+                   'note': 'v2.7: see rejected_samples for title, opening and KalPa mention context; no automatic acceptance of passing mentions.'}
 
 def news():
     with LOCK:
