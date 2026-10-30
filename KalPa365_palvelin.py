@@ -383,41 +383,43 @@ def liiga_date(value):
         return 0
 
 def liiga_kalpa_main_topic(record):
-    """KalPa must be a main subject, not a passing mention in a roundup.
-
-    Return (accepted, reason) to expose filtering decisions in diagnostics.
-    """
+    """Accept KalPa-specific reporting AND concrete KalPa game events inside roundups."""
     title = strip_markup(str(record.get('articleTitle') or record.get('title') or ''))
     if NEGATIVE.search(title):
         return False, 'unrelated_title'
-    generic = re.search(
-        r'\b(?:liiga\s+tiedottaa|otteluohjelma|ottelusiir(?:to|rot|roista)|'
-        r'kaikkien\s+joukkueiden|liigan\s+(?:viikon\s+)?(?:ottelut|uutiset|ottelukierros)|'
-        r'kooste|ottelukierros|siirrot\s+ja\s+muutokset)\b', title, re.I)
-    if generic:
-        return False, 'general_league_news'
     if POSITIVE.search(title):
         return True, 'kalpa_in_headline'
 
-    # The opening paragraph is the only fallback: a later body mention is not enough.
-    ingress = str(record.get('ingress') or record.get('summary') or record.get('description') or '')
-    body = str(record.get('searchText') or '')
-    opening = ingress or body.split('\n\n', 1)[0]
-    opening = strip_markup(opening)[:500]
+    ingress = strip_markup(str(record.get('ingress') or record.get('summary') or record.get('description') or ''))
+    body = strip_markup(str(record.get('searchText') or ''))
+    opening = (ingress or body)[:550]
     first_sentence = re.split(r'(?<=[.!?])\s+', opening, maxsplit=1)[0][:300]
-    if not POSITIVE.search(first_sentence):
-        return False, 'no_kalpa_focus'
+    generic = re.search(r'\b(?:liiga\s+tiedottaa|otteluohjelma|ottelusiir(?:to|rot|roista)|kooste|tilastonostot|viikkokatsaus)\b', title, re.I)
+    if POSITIVE.search(first_sentence) and not generic:
+        teams = set(x.lower() for x in re.findall(
+            r'\b(?:HIFK|HPK|Ilves|Jukurit|JYP|K-?Espoo|Kärpät|Lukko|Pelicans|SaiPa|Sport|Tappara|TPS|Ässät|Jokerit)\b', opening, re.I))
+        if len(teams) <= 1:
+            return True, 'kalpa_in_opening'
 
-    # A news story about a specific KalPa game can mention one opponent.
-    # Broad roundups listing many clubs are excluded.
-    teams = set(x.lower() for x in re.findall(
-        r'\b(?:HIFK|HPK|Ilves|Jukurit|JYP|K-?Espoo|Kärpät|Lukko|'
-        r'Pelicans|SaiPa|Sport|Tappara|TPS|Ässät|Jokerit)\b', opening, re.I))
-    if len(teams) > 1:
-        return False, 'multi_team_roundup'
-    if re.search(r'\b(?:otteluohjelm|ottelusiir|kierroksen\s+kaikki|useita\s+otteluita)\w*', opening, re.I):
-        return False, 'schedule_roundup'
-    return True, 'kalpa_in_opening'
+    # Full article may contain a meaningful KalPa match paragraph even when
+    # its headline summarizes multiple teams. Ignore bare historical lists.
+    # Sentence boundaries include newlines to avoid combining unrelated rows.
+    chunks = re.split(r'(?<=[.!?])\s+|[\r\n]+', body)
+    game_action = re.compile(
+        r'\b(?:voitt\w*|kaat\w*|kukist\w*|hävi\w*|häv\w*|tappio\w*|'
+        r'ottelu\w*|pel\w*|maal\w*|tasoit\w*|ratkais\w*|'
+        r'jatkoa\w*|ylivoima\w*|alivoima\w*|siirt\w*|siirty\w*|'
+        r'kohta\w*|nous\w*|katkais\w*)\b', re.I)
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not POSITIVE.search(chunk) or not game_action.search(chunk):
+            continue
+        if len(chunk) > 650:
+            continue
+        if re.search(r'\b(?:vuonna|kaudella|historia|ennätysluettelo)\b', chunk, re.I) and not re.search(r'\b2026\b', chunk):
+            continue
+        return True, 'kalpa_game_event_in_body'
+    return False, 'no_relevant_kalpa_event'
 
 
 def liiga_rejection_sample(record, reason):
@@ -465,7 +467,7 @@ def fetch_liiga_news():
         url = endpoint + '?' + urlencode(params)
         try:
             request = Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.4)',
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.8)',
                 'Accept': 'application/json',
                 'Referer': 'https://liiga.fi/fi/uutiset?kategoria=uusimmat'
             })
@@ -522,7 +524,7 @@ def fetch_liiga_news():
                    'count': len(found), 'scanned': len(seen),
                    'publisher_links': len(seen), 'pages': diagnostics,
                    'feed': endpoint, 'search_pages': len(diagnostics),
-                   'note': 'v2.7: see rejected_samples for title, opening and KalPa mention context; no automatic acceptance of passing mentions.'}
+                   'note': 'v2.8: accepts concrete KalPa game events inside league roundups; rejects bare historical mentions.'}
 
 def news():
     with LOCK:
