@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v1.9 — improved multi-feed diagnostics."""
+"""KalPa365 v2.0 — direct source discovery and reader."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -217,14 +217,70 @@ def fetch_liiga():
     except Exception as exc:
         return [], {'status':'error','count':0,'scanned':0,'message':f'{type(exc).__name__}: {str(exc)[:140]}'}
 
+# Direct publisher category/team pages. Only public links present in HTML are used.
+# A 403 response is recorded and never bypassed.
+DIRECT_PAGES = {
+    'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
+    'Liiga.fi': ['https://liiga.fi/fi/uutiset?kategoria=uusimmat'],
+}
+
+class DirectLinkParser(HTMLParser):
+    def __init__(self, source, base):
+        super().__init__(convert_charrefs=True)
+        self.source, self.base = source, base
+        self.active = None
+        self.links = []
+    def handle_starttag(self, tag, attrs):
+        if tag != 'a': return
+        href = dict(attrs).get('href', '')
+        link = urljoin(self.base, href)
+        path = urlparse(link).path
+        valid_path = (path.startswith('/Uutiset/') or path.startswith('/LIIGA/')) if self.source == 'Jatkoaika' else path.startswith('/fi/uutiset/')
+        if valid_path and allowed_publisher(link):
+            self.active = [link.split('#')[0], []]
+    def handle_data(self, data):
+        if self.active is not None: self.active[1].append(data)
+    def handle_endtag(self, tag):
+        if tag == 'a' and self.active is not None:
+            title = strip_markup(' '.join(self.active[1]))
+            if title: self.links.append((title, self.active[0]))
+            self.active = None
+
+def fetch_direct(source, pages):
+    all_items, seen, diagnostics = [], set(), []
+    for page in pages:
+        try:
+            req = Request(page, headers={'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/2.0)', 'Accept': 'text/html'})
+            with urlopen(req, timeout=12) as response:
+                if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
+                raw = response.read(2_000_001)
+                if len(raw) > 2_000_000: raise ValueError('Page too large')
+                decoded = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+            parser = DirectLinkParser(source, page)
+            parser.feed(decoded)
+            for title, link in parser.links:
+                if link in seen or not POSITIVE.search(title) or NEGATIVE.search(title): continue
+                seen.add(link)
+                all_items.append({'title': title, 'source': source, 'url': link,
+                                  'summary': '', 'timestamp': 0, 'published': ''})
+            diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links)})
+        except Exception as exc:
+            diagnostics.append({'page': page, 'status': 'error', 'message': f'{type(exc).__name__}: {str(exc)[:120]}'})
+    return all_items, {'status': 'ok' if any(d['status']=='ok' for d in diagnostics) else 'error',
+                       'count': len(all_items), 'scanned': sum(d.get('scanned', 0) for d in diagnostics),
+                       'publisher_links': sum(d.get('scanned', 0) for d in diagnostics),
+                       'pages': diagnostics, 'feed': pages[0]}
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
         items=[]; sources={}
         for source,urls in FEEDS.items():
             result,info=fetch(source,urls); items.extend(result); sources[source]=info
-        liiga_result, liiga_info = fetch_liiga()
-        items.extend(liiga_result); sources['Liiga.fi'] = liiga_info
+        for source, pages in DIRECT_PAGES.items():
+            found, info = fetch_direct(source, pages)
+            items.extend(found)
+            sources[source] = info
         seen=set(); unique=[]
         for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
             key=item['url'].split('?')[0].rstrip('/')

@@ -1,12 +1,12 @@
-KalPa365 1.9 — RSS-korjaus ja lähdekohtainen diagnostiikka
+KalPa365 2.0 — suorien uutislähteiden haku
 
-Muutokset:
-- IL:n tyhjäksi jäänyt tuoreimmat.xml korvattu RSS-osoitteilla rss.xml ja rss/uutiset.xml.
-- Kaikki määritellyt RSS-syötteet luetaan, eivät vain ensimmäistä onnistunutta.
-- /api/news → sources → <lähde> → feeds näyttää kunkin syötteen tilan.
-- Ylen, Savon Sanomien ja version 1.8 toimiva lukutila säilyvät.
-- Jatkoajan 403 ja Liiga.fi:n JavaScript-pohjainen uutislista eivät ole ratkaistuja; niitä ei esitetä toimivina.
-- IS:n tuoreimmat RSS voi edelleen sisältää 0 KalPa-uutista. Uutta urheilu-RSS-osoitetta ei arvata.
+Sisältö:
+- RSS: IS, IL, Savon Sanomat, Yle. Kaikki määritellyt RSS-syötteet luetaan.
+- Jatkoaika: julkisen KalPa-joukkuesivun artikkelilinkit, jos sivu sallii palvelinpyynnöt.
+- Liiga.fi: julkisen uutisluettelon artikkelilinkit, jos ne sisältyvät HTML-vastaukseen.
+- Kokotekstin lukutila ja SQLite-historia ennallaan.
+- /api/news → sources sisältää lähdekohtaisen tilan ja sivudiagnostiikan.
 
-Asennus: korvaa GitHubissa viisi tiedostoa ja julkaise Renderissä.
-Start Command: python KalPa365_palvelin.py
+Rajoitukset: Jatkoajan HTTP 403 -estoa ei kierretä. Liiga.fi:n JS:llä ladattuja artikkeleita ei välttämättä löydy. IS/IL:n RSS:ssä voi edelleen olla 0 KalPa-osumaa. Lähdekohtaisten julkisten sivujen toteutus on kokeellinen, ei tuotannossa vahvistettu.
+
+Asennus: Korvaa GitHubissa neljä tiedostoa ja tee commit. Render Start Command: python KalPa365_palvelin.py
