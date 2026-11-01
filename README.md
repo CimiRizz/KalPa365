@@ -12,3 +12,7 @@ Pohjana v5.0. Korjaa tilanteen, jossa artikkelin julkaisupäivä näkyy alkuper�
 Rajoitus: jos julkaisija näyttää päivämäärän vain JavaScriptillä tai epästandardissa muodossa, artikkeli voidaan edelleen jättää pois.
 
 **Julkaisu:** korvaa GitHubissa vain `KalPa365_palvelin.py`. Renderin toimivuutta ei ole testattu.
+
+
+## v5.2
+Google News -haku poistettu kokonaan. Uutiset haetaan vain alkuperäisten julkaisijoiden RSS-syötteistä, suorilta sivuilta ja Liigan rajapinnasta. Vanhoja Google News -linkkejä ei näytetä historiasta.

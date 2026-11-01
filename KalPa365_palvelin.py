@@ -572,79 +572,6 @@ def fetch_liiga_news():
                    'note': 'v2.8: accepts concrete KalPa game events inside league roundups; rejects bare historical mentions.'}
 
 
-# Täydentävä, KalPa-aiheinen julkaisijakohtainen haku. Tavalliset
-# tuoreimpien RSS-syötteet eivät välttämättä sisällä yhtään KalPa-uutista.
-TARGETED_NEWS_SITES = {
-    'IS': 'is.fi',
-    'IL': 'iltalehti.fi',
-    'Jatkoaika': 'jatkoaika.com',
-    'MTV Uutiset': 'mtvuutiset.fi',
-    'Kiekkoareena': 'kiekkoareena.fi',
-    'Keskisuomalainen': 'ksml.fi',
-    'Etelä-Suomen Sanomat': 'ess.fi',
-    'Karjalainen': 'karjalainen.fi',
-    'Kaleva': 'kaleva.fi',
-    'Yle.fi': 'yle.fi',
-    'Savon Sanomat': 'savonsanomat.fi',
-    'SuomiKiekko': 'suomikiekko.com',
-    'Kiekkouutiset': 'kiekkouutiset.fi',
-}
-def fetch_targeted_google_news(source, domain):
-    """Supplementary Google News RSS site search; results may be unavailable."""
-    query = f'KalPa site:{domain} when:30d'
-    feed_url = 'https://news.google.com/rss/search?' + urlencode({
-        'q': query, 'hl': 'fi', 'gl': 'FI', 'ceid': 'FI:fi'
-    })
-    try:
-        req = Request(feed_url, headers={
-            'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/4.0)',
-            'Accept': 'application/rss+xml, application/xml'
-        })
-        with urlopen(req, timeout=10) as response:
-            if urlparse(response.geturl()).hostname != 'news.google.com':
-                raise ValueError('Unexpected news redirect')
-            raw = response.read(1_000_001)
-        if len(raw) > 1_000_000:
-            raise ValueError('News feed too large')
-        root = ET.fromstring(raw)
-        results = []
-        scanned = 0
-        cutoff = time.time() - HISTORY_DAYS * 86400
-        for entry in root.findall('./channel/item'):
-            scanned += 1
-            title = strip_markup(child_text(entry, {'title'}))
-            link = child_text(entry, {'link'})
-            published = child_text(entry, {'pubdate'})
-            publisher_node = next((n for n in entry if local(n.tag) == 'source'), None)
-            publisher_url = publisher_node.attrib.get('url', '') if publisher_node is not None else ''
-            publisher_host = (urlparse(publisher_url).hostname or '').lower()
-            # Check actual publisher metadata, not only search-query text.
-            if publisher_host != domain and not publisher_host.endswith('.' + domain):
-                continue
-            if not title or not POSITIVE.search(title) or NEGATIVE.search(title):
-                continue
-            if urlparse(link).hostname != 'news.google.com':
-                continue
-            try:
-                stamp = parsedate_to_datetime(published).timestamp()
-            except (ValueError, TypeError, OverflowError):
-                continue
-            if stamp < cutoff or stamp > time.time() + 86400:
-                continue
-            suffix = ' - ' + (publisher_node.text or '').strip() if publisher_node is not None else ''
-            if suffix and title.endswith(suffix):
-                title = title[:-len(suffix)]
-            results.append({
-                'title': title, 'source': source, 'url': link,
-                'summary': '', 'timestamp': stamp, 'published': published
-            })
-        return results, {'status':'ok', 'count':len(results), 'scanned':scanned,
-                         'feed':feed_url, 'method':'Google News publisher search'}
-    except Exception as exc:
-        return [], {'status':'error', 'count':0, 'feed':feed_url,
-                    'method':'Google News publisher search',
-                    'message':f'{type(exc).__name__}: {str(exc)[:150]}'}
-
 def article_title_key(title):
     """Normalize superficial punctuation, diacritics and publisher suffixes."""
     title = strip_markup(str(title or '')).casefold()
@@ -663,7 +590,7 @@ def remove_duplicate_articles(articles):
     seen_urls = set()
     signatures = []
     for article in sorted(articles, key=lambda a: (
-        urlparse(str(a.get('url') or '')).hostname != 'news.google.com',
+        allowed_publisher(str(a.get('url') or '')),
         float(a.get('timestamp') or 0)
     ), reverse=True):
         url = str(article.get('url') or '').split('#')[0].split('?')[0].rstrip('/')
@@ -803,7 +730,7 @@ def publication_date_from_html(raw):
 
 def resolve_article_publication(item):
     url=str(item.get('url') or '')
-    if not allowed_publisher(url) or urlparse(url).hostname=='news.google.com':return item
+    if not allowed_publisher(url):return item
     # Preserve a trustworthy feed timestamp when already present.
     if float(item.get('timestamp') or 0)>0:return item
     now=time.time()
@@ -835,12 +762,6 @@ def news():
         items=[]; sources={}
         for source,urls in FEEDS.items():
             result,info=fetch(source,urls); items.extend(result); sources[source]=info
-        # Täydennä lähteitä myös KalPa-kohtaisella haulla.
-        # Syöte- ja hakutulokset raportoidaan erikseen diagnostiikassa.
-        for source, domain in TARGETED_NEWS_SITES.items():
-            found, info = fetch_targeted_google_news(source, domain)
-            items.extend(found)
-            sources.setdefault(source, {}).setdefault('targeted_search', info)
         for source, pages in DIRECT_PAGES.items():
             found, info = fetch_direct(source, pages)
             items.extend(found)
@@ -861,6 +782,7 @@ def news():
             resolved_by_url={a['url']:a for a in resolved}
             unique=[resolved_by_url.get(a['url'],a) for a in unique]
         historical,history_status=history_merge(unique)
+        historical=[a for a in historical if allowed_publisher(str(a.get('url') or ''))]
         # A direct HTML index has no reliable publication timestamp (timestamp=0).
         # Never present such an article as current; publisher-search/RSS articles
         # with a real timestamp remain eligible. This also cleans persisted history.
@@ -1002,9 +924,6 @@ def fetch_liiga_article(original):
 def article_for(original, verify_only=False):
     if not verify_only and original not in {a['url'] for a in news()['articles']}:
         raise ValueError('Article not in current feed')
-    if urlparse(original).hostname == 'news.google.com':
-        return {'status':'summary', 'paragraphs':[], 'original_url':original,
-                'message':'Google News -linkistä ei voi hakea artikkelitekstiä suoraan. Avaa alkuperäinen artikkeli.'}
     if not allowed_publisher(original): raise ValueError('Publisher not allowed')
     if urlparse(original).hostname == 'liiga.fi':
         try:
