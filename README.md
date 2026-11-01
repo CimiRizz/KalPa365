@@ -7,3 +7,6 @@ Uutiset säilyvät uusimmasta vanhimpaan. Musta yläpalkki, logot, ottelut ja ka
 **Asennus:** Korvaa GitHubissa `KalPa365_palvelin.py` tämän paketin versiolla. Odota Renderin julkaisua, päivitä sivu Ctrl+F5. Uutishistoriaa ei tarvitse tyhjentää.
 
 Tarkistukset: Pythonin syntaksi, deduplikoinnin yksikkötestit ja ZIP-tiedoston eheys. Renderin live-toimintaa ei ole vahvistettu.
+
+## v4.3 Artikkelien lukeminen
+Uutiskortissa on nyt erillinen **Avaa alkuperäinen** -linkki. Google News -hakutuloksista artikkelin sisältöä ei yleensä voi hakea oman lukutilan kautta, koska linkki on news.google.com-osoitteessa ja palvelin hyväksyy vain alkuperäiset julkaisijat. Google News -linkki avautuu selaimessa, jossa Google ohjaa artikkelin julkaisijalle. Lukutila säilyy suorille lähteille. Maksumuuria ei kierretä.
