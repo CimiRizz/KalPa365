@@ -1,9 +1,18 @@
-# KalPa365 v5.4 — KalPa.fi:n oikeat uutisotsikot
+# KalPa365 v5.5 — SuomiKiekko
 
-- KalPa.fi:n kuvien alt-tekstejä ei enää käsitellä uutisotsikkoina.
-- KalPa.fi:n artikkelin oikea otsikko luetaan artikkelisivun h1-/JSON-LD-/og:title-kentistä, ensisijaisesti h1:stä.
-- Korjaus päivittää myös vanhaan paikalliseen uutishistoriaan tallentuneet virheelliset otsikot näytettäessä.
-- Jos artikkelista ei löydy kelvollista otsikkoa ja listan otsikko on "Kuva ...", uutista ei näytetä väärällä otsikolla.
-- 30 päivän rajaus, muut suodatukset, Google Newsin poisto, muut uutislähteet, lukutila, pelit ja logot säilyvät.
+Pohjana v5.4. Vain SuomiKiekon suoraa uutishakua laajennettu.
 
-Asennus: vaihda GitHubissa vain KalPa365_palvelin.py ja odota Renderin automaattinen julkaisu.
+- SuomiKiekon hakutulokset tarkistetaan alkuperäiseltä artikkelisivulta.
+- Otsikko luetaan artikkelin otsikkokentästä, ei kuvan alt-tekstistä.
+- KalPa-relevanssi tarkistetaan artikkelin varsinaisesta otsikosta/tekstistä.
+- Julkaisupäivä poimitaan artikkelista; yli 30 päivän uutiset hylätään.
+- Maksullinen, liian lyhyt tai lukukelvoton artikkeli hylätään.
+- Google News ei ole käytössä.
+- Muita lähteitä, ottelunäkymää eikä HTML-ulkoasua muutettu.
+
+## Asennus
+Korvaa GitHubissa vain `KalPa365_palvelin.py`, Render julkaisee sen.
+Tarkista `/api/sources` -> `SuomiKiekko` -> `direct_pages`.
+
+## Testaus
+Koodi voidaan tarkistaa paikallisesti; live-julkaisijan ja Renderin toimintaa ei ole vahvistettu.

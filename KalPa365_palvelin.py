@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.4 — fix KalPa.fi headlines from original article pages."""
+"""KalPa365 v5.5 — add direct SuomiKiekko article discovery."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -251,7 +251,7 @@ DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
     'KalPa.fi': ['https://kalpa.fi/'],
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
-    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/', 'https://www.suomikiekko.com/liiga/'],
+    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
 
 }
@@ -297,6 +297,63 @@ class DirectLinkParser(HTMLParser):
             if title: self.links.append((title, self.active[0]))
             self.active = None
 
+# SuomiKiekko's search-result headlines do not always contain "KalPa".
+# Only promote a search result after checking its *own article body*, date and
+# access status. The HTML page's navigation/sidebar text is never evidence.
+SUOMIKIEKKO_RESULT_CACHE = {}
+SUOMIKIEKKO_RESULT_LOCK = threading.Lock()
+
+def verify_suomikiekko_candidate(candidate):
+    url = candidate['url']
+    if urlparse(url).hostname not in ('suomikiekko.com', 'www.suomikiekko.com'):
+        return None
+    with SUOMIKIEKKO_RESULT_LOCK:
+        cached = SUOMIKIEKKO_RESULT_CACHE.get(url)
+        if cached and time.time() - cached[0] < 3600:
+            return cached[1]
+    item = None
+    try:
+        request = Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/5.5)',
+            'Accept': 'text/html'})
+        with urlopen(request, timeout=8) as response:
+            if urlparse(response.geturl()).hostname not in ('suomikiekko.com', 'www.suomikiekko.com'):
+                raise ValueError('Unexpected redirect')
+            raw = response.read(1_200_001)
+            if len(raw) > 1_200_000:
+                raise ValueError('Page too large')
+            document = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+        if PAYWALL_HINTS.search(document):
+            raise ValueError('Premium article')
+        stamp = publication_date_from_html(document, urlparse(url).hostname or '')
+        if not stamp or stamp < time.time() - HISTORY_DAYS * 86400 or stamp > time.time() + 86400:
+            raise ValueError('No recent original publication date')
+        text_parser = ReaderParser()
+        text_parser.feed(document)
+        paragraphs = max(
+            (list(dict.fromkeys(text_parser.paragraphs)),
+             list(dict.fromkeys(jsonld_paragraphs(text_parser.json_scripts)))),
+            key=lambda parts: sum(map(len, parts)))
+        headline = kalpa_headline_from_html(document)
+        # Site search can return related links, ads and unrelated news.
+        # Search relevance must occur in the article's actual headline/body.
+        if not POSITIVE.search(headline + ' ' + ' '.join(paragraphs)):
+            raise ValueError('Not about KalPa')
+        if not headline or not valid_kalpa_headline(headline):
+            raise ValueError('Missing headline')
+        if len(paragraphs) < 2 or sum(map(len, paragraphs)) < 450:
+            raise ValueError('Public article text unavailable')
+        item = dict(candidate, title=headline,
+                    timestamp=stamp,
+                    published=datetime.fromtimestamp(stamp, timezone.utc).isoformat())
+        with FREE_CACHE_LOCK:
+            FREE_CACHE[url] = (time.time(), True)
+    except (OSError, ValueError, TimeoutError, UnicodeError):
+        pass
+    with SUOMIKIEKKO_RESULT_LOCK:
+        SUOMIKIEKKO_RESULT_CACHE[url] = (time.time(), item)
+    return item
+
 def fetch_direct(source, pages):
     all_items, seen, diagnostics = [], set(), []
     for page in pages:
@@ -309,15 +366,31 @@ def fetch_direct(source, pages):
                 decoded = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
             parser = DirectLinkParser(source, page)
             parser.feed(decoded)
+            page_candidates = []
             for title, link in parser.links:
-                # A publisher card may display an abbreviated/empty anchor while
-                # the article permalink clearly contains the subject (KalPa).
+                # Search results can have legitimate articles whose headlines
+                # never mention KalPa. Check their actual content separately.
                 path_label = unquote(urlparse(link).path).replace('-', ' ')
-                if link in seen or (source != 'KalPa.fi' and not POSITIVE.search(title + ' ' + path_label)) or NEGATIVE.search(title): continue
+                is_sk_search = source == 'SuomiKiekko' and 's=KalPa' in page
+                if (link in seen or NEGATIVE.search(title)
+                    or (source not in ('KalPa.fi',) and not is_sk_search
+                        and not POSITIVE.search(title + ' ' + path_label))):
+                    continue
                 seen.add(link)
-                all_items.append({'title': title, 'source': source, 'url': link,
-                                  'summary': '', 'timestamp': 0, 'published': ''})
-            diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links)})
+                page_candidates.append({'title': title, 'source': source, 'url': link,
+                                        'summary': '', 'timestamp': 0, 'published': ''})
+            if source == 'SuomiKiekko':
+                # Limit page fetches so Render doesn't stall on a publisher.
+                with ThreadPoolExecutor(max_workers=6) as executor:
+                    checked = list(executor.map(verify_suomikiekko_candidate, page_candidates[:45]))
+                all_items.extend(item for item in checked if item is not None)
+                diagnostics.append({'page': page, 'status': 'ok',
+                                    'scanned': len(parser.links),
+                                    'candidates_checked': min(len(page_candidates), 45),
+                                    'verified_articles': sum(item is not None for item in checked)})
+            else:
+                all_items.extend(page_candidates)
+                diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links)})
         except Exception as exc:
             diagnostics.append({'page': page, 'status': 'error', 'message': f'{type(exc).__name__}: {str(exc)[:120]}'})
     return all_items, {'status': 'ok' if any(d['status']=='ok' for d in diagnostics) else 'error',
