@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v2.7 — Liiga relevance diagnostics and Builder.io reader."""
+"""KalPa365 v5.3 — publisher-only news and improved direct-source parsing."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -251,7 +251,7 @@ DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
     'KalPa.fi': ['https://kalpa.fi/'],
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
-    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/'],
+    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/', 'https://www.suomikiekko.com/liiga/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
 
 }
@@ -263,8 +263,14 @@ class DirectLinkParser(HTMLParser):
         self.active = None
         self.links = []
     def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'img' and self.active is not None:
+            # Many publisher cards use an image-only anchor; image alt is the title.
+            alt = attrs.get('alt', '')
+            if alt: self.active[1].append(alt)
+            return
         if tag != 'a': return
-        href = dict(attrs).get('href', '')
+        href = attrs.get('href', '')
         link = urljoin(self.base, href)
         path = urlparse(link).path
         if self.source == 'Jatkoaika':
@@ -282,12 +288,12 @@ class DirectLinkParser(HTMLParser):
         else:
             valid_path = path.startswith('/fi/uutiset/')
         if valid_path and allowed_publisher(link):
-            self.active = [link.split('#')[0], []]
+            self.active = [link.split('#')[0], [attrs.get('title', ''), attrs.get('aria-label', '')]]
     def handle_data(self, data):
         if self.active is not None: self.active[1].append(data)
     def handle_endtag(self, tag):
         if tag == 'a' and self.active is not None:
-            title = strip_markup(' '.join(self.active[1]))
+            title = strip_markup(' '.join(x for x in self.active[1] if x))
             if title: self.links.append((title, self.active[0]))
             self.active = None
 
@@ -304,7 +310,10 @@ def fetch_direct(source, pages):
             parser = DirectLinkParser(source, page)
             parser.feed(decoded)
             for title, link in parser.links:
-                if link in seen or (source != 'KalPa.fi' and not POSITIVE.search(title)) or NEGATIVE.search(title): continue
+                # A publisher card may display an abbreviated/empty anchor while
+                # the article permalink clearly contains the subject (KalPa).
+                path_label = unquote(urlparse(link).path).replace('-', ' ')
+                if link in seen or (source != 'KalPa.fi' and not POSITIVE.search(title + ' ' + path_label)) or NEGATIVE.search(title): continue
                 seen.add(link)
                 all_items.append({'title': title, 'source': source, 'url': link,
                                   'summary': '', 'timestamp': 0, 'published': ''})
@@ -629,6 +638,15 @@ def is_verified_free(article):
     url = str(article.get('url') or '')
     if not allowed_publisher(url) or PREMIUM_TITLE.search(article.get('title') or ''):
         return False
+    # KalPa publishes its own official news openly. Do not reject these
+    # articles for a short body, image-only content or imperfect text parsing.
+    # URL must be a genuine KalPa article; the 30-day publication-date gate
+    # runs earlier in news() and still applies to every source.
+    parsed = urlparse(url)
+    if parsed.hostname in ('kalpa.fi', 'www.kalpa.fi') and re.fullmatch(
+        r'/fi-fi/article/[^/]+/[^/]+/\d+/?', parsed.path, re.I
+    ):
+        return True
     now = time.time()
     with FREE_CACHE_LOCK:
         cached = FREE_CACHE.get(url)
@@ -670,6 +688,18 @@ DATE_META_NAMES = {'article:published_time', 'og:published_time', 'datepublished
 def parse_publication_date(value):
     if not isinstance(value, str) or not value.strip(): return 0
     value = value.strip()
+    finnish = re.fullmatch(r'(\d{1,2})\.(\d{1,2})\.(20\d{2})(?:\s+(\d{1,2}):(\d{2}))?\.?', value)
+    if finnish:
+        from datetime import timedelta
+        day, month, year, hour, minute = finnish.groups()
+        try:
+            # Finnish publisher dates are local time in Finland; use local
+            # timezone with DST instead of interpreting midnight as UTC.
+            from zoneinfo import ZoneInfo
+            dt = datetime(int(year), int(month), int(day), int(hour or 12), int(minute or 0), tzinfo=ZoneInfo('Europe/Helsinki'))
+            return dt.timestamp()
+        except (ValueError, OverflowError):
+            return 0
     try:
         dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
@@ -720,12 +750,42 @@ def structured_published(scripts):
         except (ValueError,TypeError,RecursionError):pass
     return values
 
-def publication_date_from_html(raw):
+class ArticleHeaderDateParser(HTMLParser):
+    """Read a date shown near article headline, not dates within article body."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.in_h1 = False
+        self.after_h1 = False
+        self.text = []
+        self.length = 0
+        self.ignore_depth = 0
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script','style','nav','footer','aside'):
+            self.ignore_depth += 1
+        if tag == 'h1' and not self.ignore_depth:
+            self.in_h1 = True
+    def handle_endtag(self, tag):
+        if tag == 'h1' and self.in_h1:
+            self.in_h1 = False
+            self.after_h1 = True
+        if tag in ('script','style','nav','footer','aside') and self.ignore_depth:
+            self.ignore_depth -= 1
+    def handle_data(self, data):
+        if self.after_h1 and not self.ignore_depth and self.length < 500:
+            self.text.append(data)
+            self.length += len(data)
+
+def publication_date_from_html(raw, source_host=''):
     parser=PublicationDateParser();parser.feed(raw)
-    # Original publication date takes priority over updated/modified date.
     for value in structured_published(parser.scripts)+parser.metadata+parser.time_values:
         stamp=parse_publication_date(value)
         if stamp:return stamp
+    # Only on publishers known to show a Finnish date directly below the h1.
+    # Never read arbitrary dates from the article body (matches or future games).
+    if source_host in ('kalpa.fi','www.kalpa.fi','suomikiekko.com','www.suomikiekko.com'):
+        header=ArticleHeaderDateParser();header.feed(raw)
+        match=re.search(r'(?<!\d)(\d{1,2}\.\d{1,2}\.20\d{2}(?:\s+\d{1,2}:\d{2})?)(?!\d)', ' '.join(header.text)[:350])
+        if match:return parse_publication_date(match.group(1))
     return 0
 
 def resolve_article_publication(item):
@@ -748,7 +808,7 @@ def resolve_article_publication(item):
                 raw=response.read(1_200_001)
                 if len(raw)>1_200_000:raise ValueError('Too large')
                 decoded=raw.decode(response.headers.get_content_charset() or 'utf-8','replace')
-            stamp=publication_date_from_html(decoded)
+            stamp=publication_date_from_html(decoded,urlparse(url).hostname or '')
         except (OSError,ValueError,TimeoutError,UnicodeError):pass
         with DATE_CACHE_LOCK:DATE_CACHE[url]=(now,stamp)
     if stamp:
@@ -826,7 +886,7 @@ class ReaderParser(HTMLParser):
         parent=self.stack[-1] if self.stack else (False,False)
         marker=' '.join(str(attrs.get(k,'')) for k in ('class','id','role','data-testid'))
         excluded=parent[0] or tag in ('script','style','nav','footer','aside','form','noscript','svg','iframe','button','header') or bool(re.search(r'related|recommend|advert|promo|share|caption|cookie|paywall',marker,re.I))
-        article=parent[1] or tag=='article' or bool(re.search(r'article|story[-_ ]?body|article[-_ ]?(body|content|text)',marker,re.I))
+        article=parent[1] or tag in ('article','main') or bool(re.search(r'article|story[-_ ]?body|article[-_ ]?(body|content|text)|entry-content|post-content|news-content',marker,re.I))
         if tag=='script' and attrs.get('type','').lower()=='application/ld+json': self.script_parts=[]
         if tag in ('p','h2','h3','blockquote') and article and not excluded and self.current is None:
             self.current={'tag':tag,'parts':[]}
