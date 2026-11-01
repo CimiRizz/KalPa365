@@ -1,13 +1,9 @@
-# KalPa365 v4.6 – uusia maksuttomia lähteitä
+# KalPa365 v4.8 – SuomiKiekko ja Kiekkouutiset
 
-Pohjana toimivaksi todettu v4.5. Lisätty:
-- KalPa.fi: seuran julkisen etusivun artikkelilinkit. KalPa.fi:n omat otteluraportit ja ennakot hyväksytään KalPa-aiheisiksi ilman otsikon KalPa-sanaa.
-- UrheiluSuomi: jääkiekkosivun KalPa-aiheiset artikkelilinkit.
-- Molemmat lisätty sallittuihin HTTPS-julkaisijoihin, jotta julkisen kokotekstin tarkistus ja lukutila voivat toimia.
+Lisätty kaksi uutislähdettä: suomikiekko.com ja kiekkouutiset.fi.
 
-Maksuttomuus tarkistetaan edelleen v4.5:n tiukalla sisällön tarkistuksella: pelkkä linkki ei riitä. Jos sivusto muuttaa HTML-rakennettaan tai estää hakemisen, kyseisen lähteen artikkelit jäävät pois, eivätkä muut lähteet lakkaa toimimasta. Ulkoisten sivujen käytännön toimivuutta Renderissä ei ole vahvistettu.
+Molemmille on lisätty KalPa-kohtainen Google News RSS -haku, suora julkaisijasivujen linkkihaku ja domain-sallinta artikkelien lukuun. Nykyinen v4.7:n maksuttomuuden varmistus säilyy: uutinen näkyy vasta, kun sen julkinen teksti voidaan ladata ja se ei näytä maksumuurimerkkejä. Näin lähteiden näkyminen ei tarkoita, että niiltä aina löytyy hyväksyttyjä artikkeleita.
 
-Ylen aiempi uutishaku säilyy. Erillisiä aggregaattoreita (Tolkkua/Uutiskynnys) ei lisätty lukutilan uutisjulkaisijoiksi, sillä niiden tiivistelmät eivät ole alkuperäisiä kokonaisia artikkeleita.
+Lähteiden diagnostiikka: /api/sources. Uutiset voivat puuttua esimerkiksi silloin, kun automaattinen lataus on estetty tai haussa ei ole KalPa-aiheisia artikkeleita.
 
-## Asennus
-Päivitä GitHubissa vain `KalPa365_palvelin.py`; muut tiedostot säilyvät. Renderin julkaisun jälkeen tarkista `/api/sources` sekä uutislista.
+Julkaisu: korvaa GitHubissa KalPa365_palvelin.py. Muut tiedostot säilyvät ennallaan.

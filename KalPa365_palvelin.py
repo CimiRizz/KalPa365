@@ -70,6 +70,8 @@ ALLOWED_PUBLISHERS = (
     'kaleva.fi',
     'kalpa.fi',
     'urheilusuomi.com',
+    'suomikiekko.com',
+    'kiekkouutiset.fi',
 )
 
 def allowed_publisher(url):
@@ -249,6 +251,8 @@ DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
     'KalPa.fi': ['https://kalpa.fi/'],
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
+    'SuomiKiekko': ['https://www.suomikiekko.com/'],
+    'Kiekkouutiset': ['https://kiekkouutiset.fi/liiga/'],
 
 }
 
@@ -269,6 +273,12 @@ class DirectLinkParser(HTMLParser):
             valid_path = bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', path))
         elif self.source == 'UrheiluSuomi':
             valid_path = path.startswith('/jaakiekko/') and path not in ('/jaakiekko/', '/jaakiekko') and len(path.split('/')) >= 4
+        elif self.source == 'SuomiKiekko':
+            # Publisher uses dated permalink URLs: /2026/10/article-slug/
+            valid_path = bool(re.fullmatch(r'/20\d{2}/(?:0?[1-9]|1[0-2])/[a-z0-9-]+/?', path, re.I))
+        elif self.source == 'Kiekkouutiset':
+            # Article links, not category or index pages.
+            valid_path = bool(re.fullmatch(r'/(?:liiga|uutiset|jaakiekko)/[a-z0-9-]{12,}/?', path, re.I))
         else:
             valid_path = path.startswith('/fi/uutiset/')
         if valid_path and allowed_publisher(link):
@@ -576,6 +586,8 @@ TARGETED_NEWS_SITES = {
     'Kaleva': 'kaleva.fi',
     'Yle.fi': 'yle.fi',
     'Savon Sanomat': 'savonsanomat.fi',
+    'SuomiKiekko': 'suomikiekko.com',
+    'Kiekkouutiset': 'kiekkouutiset.fi',
 }
 def fetch_targeted_google_news(source, domain):
     """Supplementary Google News RSS site search; results may be unavailable."""
@@ -751,7 +763,8 @@ def news():
         with ThreadPoolExecutor(max_workers=10) as pool:
             verified = list(pool.map(is_verified_free, candidates))
         historical = [a for a, ok in zip(candidates, verified) if ok]
-        data={'articles':historical[:150],'sources':sources,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
+        counts={name:sum(a.get('source')==name for a in historical) for name in sources}
+        data={'articles':historical[:150],'sources':sources,'source_counts':counts,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
               'errors':[name for name,info in sources.items() if info.get('status')=='error'],
               'status':'ok' if historical else ('error' if all(v.get('status')=='error' for v in sources.values()) else 'empty')}
         CACHE.update(at=time.time(),data=data)
