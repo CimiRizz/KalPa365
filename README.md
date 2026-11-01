@@ -1,12 +1,7 @@
-# KalPa365 v4.2 – päällekkäisten uutisten poisto
+# KalPa365 v4.5 – vain maksuttomat uutiset
 
-Korjaus tehdään palvelimessa myös vanhaan 30 päivän uutishistoriaan. Samat otsikot, URL:n eri versiot ja erittäin samankaltaiset otsikot yhdistetään. Eri uutisia samasta pelistä ei poisteta pelkän joukkueen tai aiheen perusteella.
+Uutislistalle hyväksytään vain artikkelit, joiden julkisesti saatavilla oleva sisältö voidaan varmistaa palvelimelta. Google News -välityslinkit ja maksumuurin merkityt artikkelit jätetään pois. Jos sivu estää automaattisen lukemisen tai artikkelin maksuttomuutta ei voi vahvistaa, uutista **ei näytetä**. Tämä voi vähentää uutisten määrää merkittävästi.
 
-Uutiset säilyvät uusimmasta vanhimpaan. Musta yläpalkki, logot, ottelut ja kaikki v4.1:n uutislähteet säilyvät.
+Tarkistus kattaa enintään 100 uusinta ehdokasta, suoritetaan enintään 10 rinnakkaisella pyynnöllä ja tulos tallennetaan tunniksi välimuistiin. Maksumuuritunnistus perustuu sivun ilmoittamiin tietoihin ja saatavilla olevaan sisältöön: se ei ole täydellinen eikä kierrä maksumuureja.
 
-**Asennus:** Korvaa GitHubissa `KalPa365_palvelin.py` tämän paketin versiolla. Odota Renderin julkaisua, päivitä sivu Ctrl+F5. Uutishistoriaa ei tarvitse tyhjentää.
-
-Tarkistukset: Pythonin syntaksi, deduplikoinnin yksikkötestit ja ZIP-tiedoston eheys. Renderin live-toimintaa ei ole vahvistettu.
-
-## v4.3 Artikkelien lukeminen
-Uutiskortissa on nyt erillinen **Avaa alkuperäinen** -linkki. Google News -hakutuloksista artikkelin sisältöä ei yleensä voi hakea oman lukutilan kautta, koska linkki on news.google.com-osoitteessa ja palvelin hyväksyy vain alkuperäiset julkaisijat. Google News -linkki avautuu selaimessa, jossa Google ohjaa artikkelin julkaisijalle. Lukutila säilyy suorille lähteille. Maksumuuria ei kierretä.
+Asennus: korvaa GitHubissa `KalPa365_palvelin.py`; `index.html` voidaan säilyttää ennallaan. Renderin uudelleenjulkaisun jälkeen tarkista `/api/news`.

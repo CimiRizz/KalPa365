@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
 import json, os, re, time, threading, pathlib, html, sqlite3, unicodedata
 from difflib import SequenceMatcher
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -17,6 +18,8 @@ DB_PATH = pathlib.Path(os.environ.get('KALPA365_DB', str(ROOT / 'kalpa365_histor
 HISTORY_DAYS = 30
 LOCK = threading.Lock()
 CACHE = {'at': 0, 'data': None}
+FREE_CACHE = {}
+FREE_CACHE_LOCK = threading.Lock()
 FEEDS = {
     'IS': [
         'https://www.is.fi/rss/tuoreimmat.xml',
@@ -636,7 +639,10 @@ def remove_duplicate_articles(articles):
     kept = []
     seen_urls = set()
     signatures = []
-    for article in sorted(articles, key=lambda a: float(a.get('timestamp') or 0), reverse=True):
+    for article in sorted(articles, key=lambda a: (
+        urlparse(str(a.get('url') or '')).hostname != 'news.google.com',
+        float(a.get('timestamp') or 0)
+    ), reverse=True):
         url = str(article.get('url') or '').split('#')[0].split('?')[0].rstrip('/')
         key = article_title_key(article.get('title'))
         if not key or url in seen_urls:
@@ -660,6 +666,48 @@ def remove_duplicate_articles(articles):
         signatures.append((key, words))
     return kept
 
+
+
+PAYWALL_HINTS = re.compile(
+    r'"isAccessibleForFree"\s*:\s*(?:false|"false")|'
+    r'"isAccessibleForFree"\s*:\s*"?False"?|'
+    r'"paywall"\s*:\s*true', re.I)
+PREMIUM_TITLE = re.compile(r'(?i)(?:^|[\s:|–-])(?:IL\s*Plus|IS\s*Extra|Plus|Premium|Tilaajille)(?:$|[\s:|–-])')
+
+def is_verified_free(article):
+    """Conservative: only keep publicly readable articles, never guess from source."""
+    url = str(article.get('url') or '')
+    if not allowed_publisher(url) or PREMIUM_TITLE.search(article.get('title') or ''):
+        return False
+    now = time.time()
+    with FREE_CACHE_LOCK:
+        cached = FREE_CACHE.get(url)
+        if cached and now - cached[0] < 3600:
+            return cached[1]
+    ok = False
+    try:
+        if urlparse(url).hostname == 'liiga.fi':
+            result = fetch_liiga_article(url)
+            ok = result.get('status') == 'full' and sum(map(len, result.get('paragraphs', []))) >= 450
+        else:
+            req = Request(url, headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365Reader/1.8)', 'Accept':'text/html'})
+            with urlopen(req, timeout=7) as response:
+                if not allowed_publisher(response.geturl()):
+                    raise ValueError('Unexpected redirect')
+                raw = response.read(900_001)
+                if len(raw)>900_000: raise ValueError('Too large')
+                html_text = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+            if not PAYWALL_HINTS.search(html_text):
+                parser=ReaderParser(); parser.feed(html_text)
+                visible=list(dict.fromkeys(parser.paragraphs))
+                structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
+                paragraphs=max((visible, structured), key=lambda ps:sum(map(len,ps)))
+                ok = len(paragraphs)>=2 and sum(map(len,paragraphs))>=450
+    except (Exception):
+        ok = False
+    with FREE_CACHE_LOCK:
+        FREE_CACHE[url] = (now, ok)
+    return ok
 
 def news():
     with LOCK:
@@ -686,9 +734,15 @@ def news():
             if key not in seen: seen.add(key); unique.append(item)
         historical,history_status=history_merge(unique)
         historical = remove_duplicate_articles(historical)
+        # Only show articles whose public text could be verified.
+        # This intentionally excludes unknown/paywalled links rather than guessing.
+        candidates = historical[:100]
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            verified = list(pool.map(is_verified_free, candidates))
+        historical = [a for a, ok in zip(candidates, verified) if ok]
         data={'articles':historical[:150],'sources':sources,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
-              'errors':[name for name,info in sources.items() if info['status']=='error'],
-              'status':'ok' if historical else ('error' if all(v['status']=='error' for v in sources.values()) else 'empty')}
+              'errors':[name for name,info in sources.items() if info.get('status')=='error'],
+              'status':'ok' if historical else ('error' if all(v.get('status')=='error' for v in sources.values()) else 'empty')}
         CACHE.update(at=time.time(),data=data)
         return data
 
@@ -798,9 +852,12 @@ def fetch_liiga_article(original):
     return {'status': 'summary', 'paragraphs': [], 'original_url': original,
             'message': 'Liigan artikkelin tekstiä ei löytynyt Builder.io-rajapinnasta.'}
 
-def article_for(original):
-    if original not in {a['url'] for a in news()['articles']}:
+def article_for(original, verify_only=False):
+    if not verify_only and original not in {a['url'] for a in news()['articles']}:
         raise ValueError('Article not in current feed')
+    if urlparse(original).hostname == 'news.google.com':
+        return {'status':'summary', 'paragraphs':[], 'original_url':original,
+                'message':'Google News -linkistä ei voi hakea artikkelitekstiä suoraan. Avaa alkuperäinen artikkeli.'}
     if not allowed_publisher(original): raise ValueError('Publisher not allowed')
     if urlparse(original).hostname == 'liiga.fi':
         try:
@@ -816,11 +873,13 @@ def article_for(original):
         raw=response.read(1_500_001)
         if len(raw)>1_500_000: raise ValueError('Article too large')
         decoded=raw.decode(response.headers.get_content_charset() or 'utf-8','replace')
+    if PAYWALL_HINTS.search(decoded):
+        return {'status':'summary','paragraphs':[], 'original_url':original, 'message':'Artikkeli vaatii tilauksen.'}
     parser=ReaderParser(); parser.feed(decoded)
     visible=list(dict.fromkeys(parser.paragraphs))
     structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
     paragraphs=max((visible,structured),key=lambda ps:sum(map(len,ps)))
-    if sum(map(len,paragraphs))<250:
+    if sum(map(len,paragraphs))<450 or len(paragraphs)<2:
         return {'status':'summary','paragraphs':[],'original_url':original,
                 'message':'Kokotekstiä ei löytynyt julkisesta sivusta.',
                 'debug':{'html_paragraphs':len(visible),'jsonld_paragraphs':len(structured)}}
