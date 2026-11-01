@@ -251,8 +251,8 @@ DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
     'KalPa.fi': ['https://kalpa.fi/'],
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
-    'SuomiKiekko': ['https://www.suomikiekko.com/'],
-    'Kiekkouutiset': ['https://kiekkouutiset.fi/liiga/'],
+    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/'],
+    'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
 
 }
 
@@ -759,11 +759,16 @@ def news():
         historical = remove_duplicate_articles(historical)
         # Only show articles whose public text could be verified.
         # This intentionally excludes unknown/paywalled links rather than guessing.
-        candidates = historical[:100]
+        candidates = historical[:500]
         with ThreadPoolExecutor(max_workers=10) as pool:
             verified = list(pool.map(is_verified_free, candidates))
         historical = [a for a, ok in zip(candidates, verified) if ok]
         counts={name:sum(a.get('source')==name for a in historical) for name in sources}
+        candidate_counts={name:sum(a.get('source')==name for a in candidates) for name in sources}
+        for name in sources:
+            sources[name]['candidate_count'] = candidate_counts[name]
+            sources[name]['verified_free_count'] = counts[name]
+            sources[name]['rejected_count'] = candidate_counts[name] - counts[name]
         data={'articles':historical[:150],'sources':sources,'source_counts':counts,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
               'errors':[name for name,info in sources.items() if info.get('status')=='error'],
               'status':'ok' if historical else ('error' if all(v.get('status')=='error' for v in sources.values()) else 'empty')}

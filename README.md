@@ -1,9 +1,14 @@
-# KalPa365 v4.8 – SuomiKiekko ja Kiekkouutiset
+# KalPa365 v4.9 – uutislähteiden löydettävyyden korjaus
 
-Lisätty kaksi uutislähdettä: suomikiekko.com ja kiekkouutiset.fi.
+**Miksi v4.8 ei tuonut uutisia:** Etusivun uusimmissa uutisissa ei välttämättä ole KalPaa käsitteleviä artikkeleita. Lisäksi sovellus varmisti maksuttomuuden vain 100 ensimmäisestä artikkeliehdokkaasta; suorilta sivuilta löydettyjen artikkelien aikaleima on 0, joten ne jäävät usein tarkistusrajan ulkopuolelle.
 
-Molemmille on lisätty KalPa-kohtainen Google News RSS -haku, suora julkaisijasivujen linkkihaku ja domain-sallinta artikkelien lukuun. Nykyinen v4.7:n maksuttomuuden varmistus säilyy: uutinen näkyy vasta, kun sen julkinen teksti voidaan ladata ja se ei näytä maksumuurimerkkejä. Näin lähteiden näkyminen ei tarkoita, että niiltä aina löytyy hyväksyttyjä artikkeleita.
+**Korjaukset:**
+- SuomiKiekko: KalPa-aiheinen sivustohaku `/?s=KalPa` sekä uusimpien uutisten sivu.
+- Kiekkouutiset: KalPa-aiheinen sivustohaku `/?s=KalPa` sekä Liiga-sivu.
+- Maksuttomuustarkistuksen ehdokasraja nostettu 100:sta 500:aan.
+- `/api/news`-vastauksen `sources`-tiedoissa `candidate_count`, `verified_free_count` ja `rejected_count`, jotta hylkäyksen syy voidaan rajata.
+- Maksuttomuussuodatus, otsikkosuodatus, kaksoiskappaleiden poisto, Yle, KalPa ja Liiga säilyvät.
 
-Lähteiden diagnostiikka: /api/sources. Uutiset voivat puuttua esimerkiksi silloin, kun automaattinen lataus on estetty tai haussa ei ole KalPa-aiheisia artikkeleita.
+**Rajoitukset:** Sivustohakujen toimivuutta ja maksuttomuustarkistuksen hyväksymiä tuloksia ei voitu testata live-Renderissä. Sivustojen rakenteet ja estot voivat estää haun. 500 ehdokkaan tarkistus voi kasvattaa ensimmäisen haun kestoa. Varmista julkaisun jälkeen `/api/news`-osoitteen `sources`-diagnostiikasta uusien lähteiden luvut.
 
-Julkaisu: korvaa GitHubissa KalPa365_palvelin.py. Muut tiedostot säilyvät ennallaan.
+**Asennus:** Päivitä GitHubiin vain `KalPa365_palvelin.py`. Odota Render-julkaisua, ja tarvittaessa 5 minuutin välimuistin vanhenemista.
