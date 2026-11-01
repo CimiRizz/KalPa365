@@ -1,7 +1,13 @@
-# KalPa365 v4.5 – vain maksuttomat uutiset
+# KalPa365 v4.6 – uusia maksuttomia lähteitä
 
-Uutislistalle hyväksytään vain artikkelit, joiden julkisesti saatavilla oleva sisältö voidaan varmistaa palvelimelta. Google News -välityslinkit ja maksumuurin merkityt artikkelit jätetään pois. Jos sivu estää automaattisen lukemisen tai artikkelin maksuttomuutta ei voi vahvistaa, uutista **ei näytetä**. Tämä voi vähentää uutisten määrää merkittävästi.
+Pohjana toimivaksi todettu v4.5. Lisätty:
+- KalPa.fi: seuran julkisen etusivun artikkelilinkit. KalPa.fi:n omat otteluraportit ja ennakot hyväksytään KalPa-aiheisiksi ilman otsikon KalPa-sanaa.
+- UrheiluSuomi: jääkiekkosivun KalPa-aiheiset artikkelilinkit.
+- Molemmat lisätty sallittuihin HTTPS-julkaisijoihin, jotta julkisen kokotekstin tarkistus ja lukutila voivat toimia.
 
-Tarkistus kattaa enintään 100 uusinta ehdokasta, suoritetaan enintään 10 rinnakkaisella pyynnöllä ja tulos tallennetaan tunniksi välimuistiin. Maksumuuritunnistus perustuu sivun ilmoittamiin tietoihin ja saatavilla olevaan sisältöön: se ei ole täydellinen eikä kierrä maksumuureja.
+Maksuttomuus tarkistetaan edelleen v4.5:n tiukalla sisällön tarkistuksella: pelkkä linkki ei riitä. Jos sivusto muuttaa HTML-rakennettaan tai estää hakemisen, kyseisen lähteen artikkelit jäävät pois, eivätkä muut lähteet lakkaa toimimasta. Ulkoisten sivujen käytännön toimivuutta Renderissä ei ole vahvistettu.
 
-Asennus: korvaa GitHubissa `KalPa365_palvelin.py`; `index.html` voidaan säilyttää ennallaan. Renderin uudelleenjulkaisun jälkeen tarkista `/api/news`.
+Ylen aiempi uutishaku säilyy. Erillisiä aggregaattoreita (Tolkkua/Uutiskynnys) ei lisätty lukutilan uutisjulkaisijoiksi, sillä niiden tiivistelmät eivät ole alkuperäisiä kokonaisia artikkeleita.
+
+## Asennus
+Päivitä GitHubissa vain `KalPa365_palvelin.py`; muut tiedostot säilyvät. Renderin julkaisun jälkeen tarkista `/api/sources` sekä uutislista.

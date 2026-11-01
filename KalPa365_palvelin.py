@@ -68,6 +68,8 @@ ALLOWED_PUBLISHERS = (
     'ess.fi',
     'karjalainen.fi',
     'kaleva.fi',
+    'kalpa.fi',
+    'urheilusuomi.com',
 )
 
 def allowed_publisher(url):
@@ -245,6 +247,8 @@ def fetch_liiga():
 # A 403 response is recorded and never bypassed.
 DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
+    'KalPa.fi': ['https://kalpa.fi/'],
+    'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
 
 }
 
@@ -259,7 +263,14 @@ class DirectLinkParser(HTMLParser):
         href = dict(attrs).get('href', '')
         link = urljoin(self.base, href)
         path = urlparse(link).path
-        valid_path = (path.startswith('/Uutiset/') or path.startswith('/LIIGA/')) if self.source == 'Jatkoaika' else path.startswith('/fi/uutiset/')
+        if self.source == 'Jatkoaika':
+            valid_path = path.startswith('/Uutiset/') or path.startswith('/LIIGA/')
+        elif self.source == 'KalPa.fi':
+            valid_path = bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', path))
+        elif self.source == 'UrheiluSuomi':
+            valid_path = path.startswith('/jaakiekko/') and path not in ('/jaakiekko/', '/jaakiekko') and len(path.split('/')) >= 4
+        else:
+            valid_path = path.startswith('/fi/uutiset/')
         if valid_path and allowed_publisher(link):
             self.active = [link.split('#')[0], []]
     def handle_data(self, data):
@@ -283,7 +294,7 @@ def fetch_direct(source, pages):
             parser = DirectLinkParser(source, page)
             parser.feed(decoded)
             for title, link in parser.links:
-                if link in seen or not POSITIVE.search(title) or NEGATIVE.search(title): continue
+                if link in seen or (source != 'KalPa.fi' and not POSITIVE.search(title)) or NEGATIVE.search(title): continue
                 seen.add(link)
                 all_items.append({'title': title, 'source': source, 'url': link,
                                   'summary': '', 'timestamp': 0, 'published': ''})
