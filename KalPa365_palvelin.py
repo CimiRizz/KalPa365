@@ -6,7 +6,8 @@ from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
-import json, os, re, time, threading, pathlib, html, sqlite3
+import json, os, re, time, threading, pathlib, html, sqlite3, unicodedata
+from difflib import SequenceMatcher
 from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -618,6 +619,48 @@ def fetch_targeted_google_news(source, domain):
                     'method':'Google News publisher search',
                     'message':f'{type(exc).__name__}: {str(exc)[:150]}'}
 
+def article_title_key(title):
+    """Normalize superficial punctuation, diacritics and publisher suffixes."""
+    title = strip_markup(str(title or '')).casefold()
+    title = re.sub(r'\s+[|–-]\s+(?:yle|yle\.fi|is|iltasanomat|iltalehti|mtv(?: uutiset)?|liiga(?:\.fi)?|savon sanomat|jatkoaika)\s*$', '', title)
+    title = ''.join(c for c in unicodedata.normalize('NFKD', title) if not unicodedata.combining(c))
+    return re.sub(r'[^a-z0-9]+', ' ', title).strip()
+
+
+def remove_duplicate_articles(articles):
+    """Remove identical and near-identical headlines; preserve distinct reporting.
+
+    A near match requires meaningful headline length, strong lexical overlap,
+    and a high character similarity. Different articles about one match remain.
+    """
+    kept = []
+    seen_urls = set()
+    signatures = []
+    for article in sorted(articles, key=lambda a: float(a.get('timestamp') or 0), reverse=True):
+        url = str(article.get('url') or '').split('#')[0].split('?')[0].rstrip('/')
+        key = article_title_key(article.get('title'))
+        if not key or url in seen_urls:
+            continue
+        words = set(key.split())
+        duplicate = False
+        for old_key, old_words in signatures:
+            if key == old_key:
+                duplicate = True
+                break
+            if (len(key) >= 48 and len(old_key) >= 48 and
+                min(len(words), len(old_words)) >= 7 and
+                len(words & old_words) / max(len(words | old_words), 1) >= .80 and
+                SequenceMatcher(None, key, old_key).ratio() >= .88):
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        kept.append(article)
+        seen_urls.add(url)
+        signatures.append((key, words))
+    return kept
+
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
@@ -642,7 +685,7 @@ def news():
             key=item['url'].split('?')[0].rstrip('/')
             if key not in seen: seen.add(key); unique.append(item)
         historical,history_status=history_merge(unique)
-        historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
+        historical = remove_duplicate_articles(historical)
         data={'articles':historical[:150],'sources':sources,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
               'errors':[name for name,info in sources.items() if info['status']=='error'],
               'status':'ok' if historical else ('error' if all(v['status']=='error' for v in sources.values()) else 'empty')}
