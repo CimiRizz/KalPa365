@@ -732,6 +732,103 @@ def is_verified_free(article):
         FREE_CACHE[url] = (now, ok)
     return ok
 
+
+# v5.1: resolve publication dates from original article metadata, not crawl time.
+DATE_CACHE = {}
+DATE_CACHE_LOCK = threading.Lock()
+DATE_META_NAMES = {'article:published_time', 'og:published_time', 'datepublished',
+                   'pubdate', 'publishdate', 'date', 'parsely-pub-date',
+                   'dc.date.issued', 'dc.date.created', 'citation_publication_date'}
+
+def parse_publication_date(value):
+    if not isinstance(value, str) or not value.strip(): return 0
+    value = value.strip()
+    try:
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (ValueError, OverflowError): pass
+    try: return parsedate_to_datetime(value).timestamp()
+    except (ValueError, TypeError, OverflowError): return 0
+
+class PublicationDateParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.metadata=[];self.time_values=[];self.scripts=[];self.script_parts=None
+        self.in_time=False;self.time_text=[]
+    def handle_starttag(self,tag,attrs):
+        attrs=dict(attrs)
+        if tag=='meta':
+            name=(attrs.get('property') or attrs.get('name') or attrs.get('itemprop') or '').lower()
+            if name in DATE_META_NAMES or name=='datepublished':
+                self.metadata.append(attrs.get('content',''))
+        if tag=='time':
+            dt=attrs.get('datetime') or attrs.get('content')
+            if dt:self.time_values.append(dt)
+            self.in_time=True;self.time_text=[]
+        if tag=='script' and attrs.get('type','').lower()=='application/ld+json':self.script_parts=[]
+    def handle_data(self,data):
+        if self.script_parts is not None:self.script_parts.append(data)
+        if self.in_time:self.time_text.append(data)
+    def handle_endtag(self,tag):
+        if tag=='script' and self.script_parts is not None:
+            self.scripts.append(''.join(self.script_parts));self.script_parts=None
+        if tag=='time' and self.in_time:
+            self.time_values.append(''.join(self.time_text).strip());self.in_time=False
+
+def structured_published(scripts):
+    values=[]
+    def visit(obj):
+        if isinstance(obj,list):
+            for x in obj:visit(x)
+        elif isinstance(obj,dict):
+            types=obj.get('@type',[])
+            if isinstance(types,str):types=[types]
+            if any(str(t).lower().endswith(('article','posting')) for t in types):
+                if obj.get('datePublished'):values.append(obj['datePublished'])
+            for key in ('@graph','mainEntity','mainEntityOfPage'):
+                if key in obj:visit(obj[key])
+    for script in scripts:
+        try:visit(json.loads(script))
+        except (ValueError,TypeError,RecursionError):pass
+    return values
+
+def publication_date_from_html(raw):
+    parser=PublicationDateParser();parser.feed(raw)
+    # Original publication date takes priority over updated/modified date.
+    for value in structured_published(parser.scripts)+parser.metadata+parser.time_values:
+        stamp=parse_publication_date(value)
+        if stamp:return stamp
+    return 0
+
+def resolve_article_publication(item):
+    url=str(item.get('url') or '')
+    if not allowed_publisher(url) or urlparse(url).hostname=='news.google.com':return item
+    # Preserve a trustworthy feed timestamp when already present.
+    if float(item.get('timestamp') or 0)>0:return item
+    now=time.time()
+    with DATE_CACHE_LOCK:
+        cached=DATE_CACHE.get(url)
+        if cached and now-cached[0]<21600:stamp=cached[1]
+        else:stamp=None
+    if stamp is None:
+        stamp=0
+        try:
+            req=Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365/5.1)', 'Accept':'text/html'})
+            with urlopen(req,timeout=8) as response:
+                if not allowed_publisher(response.geturl()):raise ValueError('Unexpected redirect')
+                if 'html' not in response.headers.get('Content-Type','text/html'):raise ValueError('Not HTML')
+                raw=response.read(1_200_001)
+                if len(raw)>1_200_000:raise ValueError('Too large')
+                decoded=raw.decode(response.headers.get_content_charset() or 'utf-8','replace')
+            stamp=publication_date_from_html(decoded)
+        except (OSError,ValueError,TimeoutError,UnicodeError):pass
+        with DATE_CACHE_LOCK:DATE_CACHE[url]=(now,stamp)
+    if stamp:
+        item=dict(item);item['timestamp']=stamp
+        item['published']=datetime.fromtimestamp(stamp,timezone.utc).isoformat()
+    return item
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
@@ -755,8 +852,29 @@ def news():
         for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
             key=item['url'].split('?')[0].rstrip('/')
             if key not in seen: seen.add(key); unique.append(item)
+        # Resolve dates on direct article pages BEFORE merging/filtering history.
+        # RSS dates remain unchanged; unknown dates are not fabricated.
+        undated=[a for a in unique if not float(a.get('timestamp') or 0)]
+        if undated:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                resolved=list(pool.map(resolve_article_publication,undated[:120]))
+            resolved_by_url={a['url']:a for a in resolved}
+            unique=[resolved_by_url.get(a['url'],a) for a in unique]
         historical,history_status=history_merge(unique)
+        # A direct HTML index has no reliable publication timestamp (timestamp=0).
+        # Never present such an article as current; publisher-search/RSS articles
+        # with a real timestamp remain eligible. This also cleans persisted history.
+        stored_undated=[a for a in historical if not float(a.get('timestamp') or 0)]
+        if stored_undated:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                fixed=list(pool.map(resolve_article_publication,stored_undated[:120]))
+            fixed_by_url={a['url']:a for a in fixed}
+            historical=[fixed_by_url.get(a['url'],a) for a in historical]
+        freshness_cutoff = time.time() - HISTORY_DAYS * 86400
+        historical = [a for a in historical
+                      if freshness_cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400]
         historical = remove_duplicate_articles(historical)
+        historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
         # Only show articles whose public text could be verified.
         # This intentionally excludes unknown/paywalled links rather than guessing.
         candidates = historical[:500]
