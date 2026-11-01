@@ -1,18 +1,12 @@
-# KalPa365 v5.5 — SuomiKiekko
+KalPa365 v5.6 — SuomiKiekko-hakujen korjaus
 
-Pohjana v5.4. Vain SuomiKiekon suoraa uutishakua laajennettu.
-
-- SuomiKiekon hakutulokset tarkistetaan alkuperäiseltä artikkelisivulta.
-- Otsikko luetaan artikkelin otsikkokentästä, ei kuvan alt-tekstistä.
-- KalPa-relevanssi tarkistetaan artikkelin varsinaisesta otsikosta/tekstistä.
-- Julkaisupäivä poimitaan artikkelista; yli 30 päivän uutiset hylätään.
-- Maksullinen, liian lyhyt tai lukukelvoton artikkeli hylätään.
 - Google News ei ole käytössä.
-- Muita lähteitä, ottelunäkymää eikä HTML-ulkoasua muutettu.
+- SuomiKiekon suoran haun rinnalle lisätty julkaisijan omat RSS-vaihtoehdot (jos julkaisija tarjoaa ne).
+- SuomiKiekon etusivu mukana hakupaikoissa.
+- Artikkelitekstin lisäpoiminta, jos sivulta puuttuu tyypillinen article/main-HTML-merkintä.
+- /api/sources: SuomiKiekko -> direct_pages -> pages -> rejection_samples kertoo miksi haetut artikkelit hylätään.
+- Vain aidosti alle 30 päivän ikäiset, KalPaa koskevat, julkisesti luettavat artikkelit hyväksytään.
+- Muut lähteet, ottelut, logot ja käyttöliittymä säilytetty.
 
-## Asennus
-Korvaa GitHubissa vain `KalPa365_palvelin.py`, Render julkaisee sen.
-Tarkista `/api/sources` -> `SuomiKiekko` -> `direct_pages`.
-
-## Testaus
-Koodi voidaan tarkistaa paikallisesti; live-julkaisijan ja Renderin toimintaa ei ole vahvistettu.
+Asennus: vaihda GitHubissa KalPa365_palvelin.py, odota Render-julkaisua ja tarkista /api/sources.
+Huom.: SuomiKiekon live-HTML:ää ei voitu suorittaa paikallisessa työtilassa verkkorajoituksen takia.

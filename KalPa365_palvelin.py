@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.5 — add direct SuomiKiekko article discovery."""
+"""KalPa365 v5.6 — improved direct SuomiKiekko source and rejection diagnostics."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -39,6 +39,11 @@ FEEDS = {
     'Karjalainen': ['https://www.karjalainen.fi/feed/rss'],
     'Kaleva': ['https://www.kaleva.fi/feed/rss'],
 
+    # SuomiKiekko: publisher-owned RSS feeds; these are optional fallbacks.
+    'SuomiKiekko': [
+        'https://www.suomikiekko.com/feed/',
+        'https://www.suomikiekko.com/?s=KalPa&feed=rss2',
+    ],
     'Yle.fi': [
         # Ylen viralliset RSS-syötteet. Vain KalPaa käsittelevät jutut
         # pääsevät läpi parse_feed()-funktion KalPa-aiherajauksesta.
@@ -251,7 +256,7 @@ DIRECT_PAGES = {
     'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
     'KalPa.fi': ['https://kalpa.fi/'],
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
-    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/uusimmat/'],
+    'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
 
 }
@@ -301,7 +306,50 @@ class DirectLinkParser(HTMLParser):
 # Only promote a search result after checking its *own article body*, date and
 # access status. The HTML page's navigation/sidebar text is never evidence.
 SUOMIKIEKKO_RESULT_CACHE = {}
+SUOMIKIEKKO_REJECTIONS = {}
 SUOMIKIEKKO_RESULT_LOCK = threading.Lock()
+
+class SuomiKiekkoBodyParser(HTMLParser):
+    """Fallback for article templates without <article>/<main> wrappers.
+
+    Only paragraphs after the real H1 are used. Stop before related-news areas.
+    Ignore navigation, figure captions and sidebars.
+    """
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.after_headline = False
+        self.stopped = False
+        self.ignore = 0
+        self.ignore_stack = []
+        self.current = None
+        self.paragraphs = []
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        marker = ' '.join(str(attrs.get(k,'')) for k in ('class','id','role'))
+        excluded = tag in ('nav','footer','aside','script','style','figcaption','figure','header') or bool(re.search(r'related|recommend|advert|promo|share|cookie|widget|sidebar', marker, re.I))
+        if tag not in ('meta','link','img','br','hr','input','source','wbr','area','embed'):
+            self.ignore_stack.append((tag, excluded))
+            if excluded: self.ignore += 1
+        if self.after_headline and not self.stopped and not self.ignore and tag == 'p':
+            self.current = []
+    def handle_data(self, data):
+        if self.current is not None and not self.ignore:
+            self.current.append(data)
+    def handle_endtag(self, tag):
+        if tag == 'h1' and not self.ignore:
+            self.after_headline = True
+        if tag == 'p' and self.current is not None:
+            text = ' '.join(''.join(self.current).split())
+            if re.match(r'^(?:LUE MYÖS|Kuva:|Mainos|Suosittele|Lue lisää|Aiheet\b)', text, re.I):
+                self.stopped = True
+            elif len(text) > 35 and not self.stopped and len(self.paragraphs) < 35:
+                self.paragraphs.append(text)
+            self.current = None
+        for i in range(len(self.ignore_stack)-1, -1, -1):
+            if self.ignore_stack[i][0] == tag:
+                self.ignore -= sum(int(v) for _, v in self.ignore_stack[i:])
+                del self.ignore_stack[i:]
+                break
 
 def verify_suomikiekko_candidate(candidate):
     url = candidate['url']
@@ -330,9 +378,12 @@ def verify_suomikiekko_candidate(candidate):
             raise ValueError('No recent original publication date')
         text_parser = ReaderParser()
         text_parser.feed(document)
+        fallback = SuomiKiekkoBodyParser()
+        fallback.feed(document)
         paragraphs = max(
             (list(dict.fromkeys(text_parser.paragraphs)),
-             list(dict.fromkeys(jsonld_paragraphs(text_parser.json_scripts)))),
+             list(dict.fromkeys(jsonld_paragraphs(text_parser.json_scripts))),
+             list(dict.fromkeys(fallback.paragraphs))),
             key=lambda parts: sum(map(len, parts)))
         headline = kalpa_headline_from_html(document)
         # Site search can return related links, ads and unrelated news.
@@ -348,8 +399,9 @@ def verify_suomikiekko_candidate(candidate):
                     published=datetime.fromtimestamp(stamp, timezone.utc).isoformat())
         with FREE_CACHE_LOCK:
             FREE_CACHE[url] = (time.time(), True)
-    except (OSError, ValueError, TimeoutError, UnicodeError):
-        pass
+    except (OSError, ValueError, TimeoutError, UnicodeError) as exc:
+        with SUOMIKIEKKO_RESULT_LOCK:
+            SUOMIKIEKKO_REJECTIONS[url] = str(exc)[:110] or type(exc).__name__
     with SUOMIKIEKKO_RESULT_LOCK:
         SUOMIKIEKKO_RESULT_CACHE[url] = (time.time(), item)
     return item
@@ -382,12 +434,16 @@ def fetch_direct(source, pages):
             if source == 'SuomiKiekko':
                 # Limit page fetches so Render doesn't stall on a publisher.
                 with ThreadPoolExecutor(max_workers=6) as executor:
-                    checked = list(executor.map(verify_suomikiekko_candidate, page_candidates[:45]))
+                    checked = list(executor.map(verify_suomikiekko_candidate, page_candidates[:70]))
                 all_items.extend(item for item in checked if item is not None)
                 diagnostics.append({'page': page, 'status': 'ok',
                                     'scanned': len(parser.links),
-                                    'candidates_checked': min(len(page_candidates), 45),
-                                    'verified_articles': sum(item is not None for item in checked)})
+                                    'candidates_checked': min(len(page_candidates), 70),
+                                    'verified_articles': sum(item is not None for item in checked),
+                                    'rejection_samples': [
+                                        {'url': a['url'], 'reason': SUOMIKIEKKO_REJECTIONS.get(a['url'], 'not accepted')}
+                                        for a in page_candidates[:70] if a['url'] in SUOMIKIEKKO_REJECTIONS
+                                    ][:8]})
             else:
                 all_items.extend(page_candidates)
                 diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links)})
