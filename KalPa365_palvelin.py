@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.0 — publisher sitemap discovery for MTV, v5.9 performance retained."""
+"""KalPa365 v6.1 — targeted MTV KalPa team page, v5.9 performance retained."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -269,6 +269,7 @@ DIRECT_PAGES = {
     'MTV Uutiset': [
         'https://www.mtvuutiset.fi/tuoreimmat/urheilu',
         'https://www.mtvuutiset.fi/liiga',
+        'https://www.mtvuutiset.fi/liiga/kalpa',  # MTV publisher's own KalPa news page
     ],
 
 }
@@ -460,7 +461,7 @@ def fetch_direct(source, pages):
                                     ][:8]})
             else:
                 all_items.extend(page_candidates)
-                diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links)})
+                diagnostics.append({'page': page, 'status': 'ok', 'scanned': len(parser.links), 'matched_candidates': len(page_candidates), 'sample_titles': [a['title'][:100] for a in page_candidates[:5]]})
         except Exception as exc:
             diagnostics.append({'page': page, 'status': 'error', 'message': f'{type(exc).__name__}: {str(exc)[:120]}'})
     return all_items, {'status': 'ok' if any(d['status']=='ok' for d in diagnostics) else 'error',
@@ -1158,7 +1159,7 @@ def _build_news():
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
             + [('liiga', 'Liiga.fi', None)]
-            + [('mtv_sitemap', 'MTV Uutiset', None)])
+            )  # v6.1: MTV team page replaces low-yield sitemap scan
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.
     with ThreadPoolExecutor(max_workers=SOURCE_WORKERS) as pool:

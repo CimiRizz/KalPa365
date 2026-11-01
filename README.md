@@ -1,13 +1,11 @@
-# KalPa365 v6.0 — MTV:n oman sivustokartan uutishaku
+KalPa365 v6.1 — MTV:n KalPa-joukkuesivun lisäys
 
-MTV:n RSS ja urheilusivun ennestään toimivat lähdehaut säilyvät. Lisätty MTV:n
-oma sitemap.xml uutisten löytämiseen ilman Google Newsia. Artikkeleiden
-julkaisupäivät luetaan alkuperäiseltä sivulta ja vain 30 päivän mittaiset,
-KalPa-aiheiset, julkisesti luettavat artikkelit hyväksytään.
+Muutokset:
+- Lisätty MTV:n oma https://www.mtvuutiset.fi/liiga/kalpa uutisten suoraksi hakulähteeksi.
+- MTV:n suorien sivujen diagnostiikka näyttää matched_candidates ja sample_titles.
+- Poistettu työläs MTV:n sivustokarttahaku päivittäisestä hausta (aiemmin 5 080 osoitetta, 0 osumaa).
+- Kaikki muut lähteet, 30 päivän rajaus, maksuttomuustarkistus, Google Newsin poissaolo ja v5.9:n rinnakkaishaku säilyvät.
 
-Huomaa: MTV:n live-sivustokartan toimivuutta ei ole vahvistettu tässä ympäristössä.
-Sivustokartta voi olla rakenteeltaan eri kuin odotettu, jolloin haku voi edelleen
-tuottaa nolla artikkelia. /api/sources => MTV Uutiset => sitemap kertoo tilanteen.
+Asennus: vaihda GitHubissa KalPa365_palvelin.py.
 
-Asennus: korvaa GitHubin KalPa365_palvelin.py. Muut tiedostot ovat mukana
-vain täydellisyyden vuoksi.
+Huom: MTV:n joukkuesivulta saattaa löytyä myös vanhoja juttuja. Vain päivätyt ja viimeisten 30 päivän aikana julkaistut, maksuttomiksi varmistetut artikkelit näkyvät. Live-Render-testiä ei ole tehty.
