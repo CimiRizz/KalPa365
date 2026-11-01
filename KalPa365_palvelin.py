@@ -546,16 +546,94 @@ def fetch_liiga_news():
                    'feed': endpoint, 'search_pages': len(diagnostics),
                    'note': 'v2.8: accepts concrete KalPa game events inside league roundups; rejects bare historical mentions.'}
 
+
+# Täydentävä, KalPa-aiheinen julkaisijakohtainen haku. Tavalliset
+# tuoreimpien RSS-syötteet eivät välttämättä sisällä yhtään KalPa-uutista.
+TARGETED_NEWS_SITES = {
+    'IS': 'is.fi',
+    'IL': 'iltalehti.fi',
+    'Jatkoaika': 'jatkoaika.com',
+    'MTV Uutiset': 'mtvuutiset.fi',
+    'Kiekkoareena': 'kiekkoareena.fi',
+    'Keskisuomalainen': 'ksml.fi',
+    'Etelä-Suomen Sanomat': 'ess.fi',
+    'Karjalainen': 'karjalainen.fi',
+    'Kaleva': 'kaleva.fi',
+    'Yle.fi': 'yle.fi',
+    'Savon Sanomat': 'savonsanomat.fi',
+}
+def fetch_targeted_google_news(source, domain):
+    """Supplementary Google News RSS site search; results may be unavailable."""
+    query = f'KalPa site:{domain} when:30d'
+    feed_url = 'https://news.google.com/rss/search?' + urlencode({
+        'q': query, 'hl': 'fi', 'gl': 'FI', 'ceid': 'FI:fi'
+    })
+    try:
+        req = Request(feed_url, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/4.0)',
+            'Accept': 'application/rss+xml, application/xml'
+        })
+        with urlopen(req, timeout=10) as response:
+            if urlparse(response.geturl()).hostname != 'news.google.com':
+                raise ValueError('Unexpected news redirect')
+            raw = response.read(1_000_001)
+        if len(raw) > 1_000_000:
+            raise ValueError('News feed too large')
+        root = ET.fromstring(raw)
+        results = []
+        scanned = 0
+        cutoff = time.time() - HISTORY_DAYS * 86400
+        for entry in root.findall('./channel/item'):
+            scanned += 1
+            title = strip_markup(child_text(entry, {'title'}))
+            link = child_text(entry, {'link'})
+            published = child_text(entry, {'pubdate'})
+            publisher_node = next((n for n in entry if local(n.tag) == 'source'), None)
+            publisher_url = publisher_node.attrib.get('url', '') if publisher_node is not None else ''
+            publisher_host = (urlparse(publisher_url).hostname or '').lower()
+            # Check actual publisher metadata, not only search-query text.
+            if publisher_host != domain and not publisher_host.endswith('.' + domain):
+                continue
+            if not title or not POSITIVE.search(title) or NEGATIVE.search(title):
+                continue
+            if urlparse(link).hostname != 'news.google.com':
+                continue
+            try:
+                stamp = parsedate_to_datetime(published).timestamp()
+            except (ValueError, TypeError, OverflowError):
+                continue
+            if stamp < cutoff or stamp > time.time() + 86400:
+                continue
+            suffix = ' - ' + (publisher_node.text or '').strip() if publisher_node is not None else ''
+            if suffix and title.endswith(suffix):
+                title = title[:-len(suffix)]
+            results.append({
+                'title': title, 'source': source, 'url': link,
+                'summary': '', 'timestamp': stamp, 'published': published
+            })
+        return results, {'status':'ok', 'count':len(results), 'scanned':scanned,
+                         'feed':feed_url, 'method':'Google News publisher search'}
+    except Exception as exc:
+        return [], {'status':'error', 'count':0, 'feed':feed_url,
+                    'method':'Google News publisher search',
+                    'message':f'{type(exc).__name__}: {str(exc)[:150]}'}
+
 def news():
     with LOCK:
         if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
         items=[]; sources={}
         for source,urls in FEEDS.items():
             result,info=fetch(source,urls); items.extend(result); sources[source]=info
+        # Täydennä lähteitä myös KalPa-kohtaisella haulla.
+        # Syöte- ja hakutulokset raportoidaan erikseen diagnostiikassa.
+        for source, domain in TARGETED_NEWS_SITES.items():
+            found, info = fetch_targeted_google_news(source, domain)
+            items.extend(found)
+            sources.setdefault(source, {}).setdefault('targeted_search', info)
         for source, pages in DIRECT_PAGES.items():
             found, info = fetch_direct(source, pages)
             items.extend(found)
-            sources[source] = info
+            sources.setdefault(source, {})['direct_pages'] = info
         liiga_items, liiga_info = fetch_liiga_news()
         items.extend(liiga_items)
         sources['Liiga.fi'] = liiga_info
@@ -564,6 +642,7 @@ def news():
             key=item['url'].split('?')[0].rstrip('/')
             if key not in seen: seen.add(key); unique.append(item)
         historical,history_status=history_merge(unique)
+        historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
         data={'articles':historical[:150],'sources':sources,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
               'errors':[name for name,info in sources.items() if info['status']=='error'],
               'status':'ok' if historical else ('error' if all(v['status']=='error' for v in sources.values()) else 'empty')}
@@ -719,6 +798,14 @@ class Handler(BaseHTTPRequestHandler):
             mime = 'text/html; charset=utf-8'
         elif path == '/api/news':
             payload = json.dumps(news(), ensure_ascii=False).encode('utf-8')
+            mime = 'application/json; charset=utf-8'
+        elif path == '/api/sources':
+            data = news()
+            payload = json.dumps({'sources':data.get('sources',{}),
+                                  'article_counts':{
+                                      source:sum(a.get('source')==source for a in data.get('articles',[]))
+                                      for source in data.get('sources',{})}},
+                                 ensure_ascii=False).encode('utf-8')
             mime = 'application/json; charset=utf-8'
         elif path == '/api/article':
             params=parse_qs(urlparse(self.path).query)
