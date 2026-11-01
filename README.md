@@ -1,12 +1,9 @@
-# KalPa365 v5.3 — lähteiden korjaus
+# KalPa365 v5.4 — KalPa.fi:n oikeat uutisotsikot
 
-- Google News pysyy kokonaan poistettuna.
-- KalPa.fi:n uutislinkkien ja suomalaisen päivämäärän (esim. 31.10.2026) poiminta korjattu.
-- KalPa.fi:n virallisia, avoimia artikkeleita ei hylätä artikkelitekstin pituuden vuoksi.
-- SuomiKiekon päivättyjen artikkeliosoitteiden poimintaa parannettu.
-- Kaikille uutisille edelleen 30 päivän aikaraja, muut lähteet maksuttomuustarkistuksen läpi.
-- Uutisten järjestys, päällekkäisten uutisten poisto, lukutila ja nykyinen käyttöliittymä ennallaan.
+- KalPa.fi:n kuvien alt-tekstejä ei enää käsitellä uutisotsikkoina.
+- KalPa.fi:n artikkelin oikea otsikko luetaan artikkelisivun h1-/JSON-LD-/og:title-kentistä, ensisijaisesti h1:stä.
+- Korjaus päivittää myös vanhaan paikalliseen uutishistoriaan tallentuneet virheelliset otsikot näytettäessä.
+- Jos artikkelista ei löydy kelvollista otsikkoa ja listan otsikko on "Kuva ...", uutista ei näytetä väärällä otsikolla.
+- 30 päivän rajaus, muut suodatukset, Google Newsin poisto, muut uutislähteet, lukutila, pelit ja logot säilyvät.
 
-Asennus: kopioi KalPa365_palvelin.py GitHubin vastaavan tiedoston päälle; muut tiedostot ovat mukana täyttä pakettia varten.
-
-Huom. Lähteiden live-toimintaa Renderissä ei ole testattu. Jatkoajan 403-rajoitusta ei voi ratkaista muuttamalla paikallista suodatinta.
+Asennus: vaihda GitHubissa vain KalPa365_palvelin.py ja odota Renderin automaattinen julkaisu.

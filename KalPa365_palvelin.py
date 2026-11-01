@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.3 — publisher-only news and improved direct-source parsing."""
+"""KalPa365 v5.4 — fix KalPa.fi headlines from original article pages."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -267,7 +267,7 @@ class DirectLinkParser(HTMLParser):
         if tag == 'img' and self.active is not None:
             # Many publisher cards use an image-only anchor; image alt is the title.
             alt = attrs.get('alt', '')
-            if alt: self.active[1].append(alt)
+            if alt and self.source != 'KalPa.fi': self.active[1].append(alt)
             return
         if tag != 'a': return
         href = attrs.get('href', '')
@@ -788,6 +788,96 @@ def publication_date_from_html(raw, source_host=''):
         if match:return parse_publication_date(match.group(1))
     return 0
 
+class ArticleHeadlineParser(HTMLParser):
+    """Retrieve the real article heading, never figure captions or image alt text."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.meta = []
+        self.h1 = []
+        self.in_h1 = False
+        self.skip = 0
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'meta':
+            field = (attrs.get('property') or attrs.get('name') or '').lower()
+            if field in ('og:title', 'twitter:title'):
+                self.meta.append(attrs.get('content', ''))
+        if tag in ('figure', 'figcaption', 'script', 'style'):
+            self.skip += 1
+        if tag == 'h1' and not self.skip:
+            self.in_h1 = True
+    def handle_data(self, data):
+        if self.in_h1 and not self.skip:
+            self.h1.append(data)
+    def handle_endtag(self, tag):
+        if tag == 'h1':
+            self.in_h1 = False
+        if tag in ('figure', 'figcaption', 'script', 'style') and self.skip:
+            self.skip -= 1
+
+def valid_kalpa_headline(title):
+    title = strip_markup(str(title or '')).strip()
+    return (len(title) >= 12 and not re.match(r'^(?:kuva|kuvat|image|photo|picture|©|\(c\))\s*[:#–-]?\s', title, re.I)
+            and not re.fullmatch(r'(?:kalpa|kalpa\.fi|uutiset)', title, re.I))
+
+def kalpa_headline_from_html(raw):
+    parser = ArticleHeadlineParser()
+    parser.feed(raw)
+    structured = []
+    date_parser = PublicationDateParser()
+    date_parser.feed(raw)
+    for script in date_parser.scripts:
+        try:
+            def visit(obj):
+                if isinstance(obj, list):
+                    for x in obj: visit(x)
+                elif isinstance(obj, dict):
+                    typ = obj.get('@type', [])
+                    types = [typ] if isinstance(typ, str) else typ if isinstance(typ, list) else []
+                    if any(str(x).lower().endswith(('article','posting')) for x in types):
+                        structured.append(obj.get('headline', ''))
+                    for k in ('@graph','mainEntity'):
+                        if k in obj: visit(obj[k])
+            visit(json.loads(script))
+        except (ValueError, TypeError, RecursionError):
+            pass
+    for candidate in [' '.join(parser.h1), *structured, *parser.meta]:
+        candidate = re.sub(r'\s+[|–-]\s*(?:KalPa|KalPa\.fi)\s*$', '', strip_markup(str(candidate or '')), flags=re.I).strip()
+        if valid_kalpa_headline(candidate):
+            return candidate[:220]
+    return ''
+
+KALPA_HEADLINE_CACHE = {}
+KALPA_HEADLINE_LOCK = threading.Lock()
+
+def resolve_kalpa_headline(item):
+    """Refresh even old SQLite-history titles; fall back only to a non-caption title."""
+    url = str(item.get('url') or '')
+    if item.get('source') != 'KalPa.fi' or urlparse(url).hostname not in ('kalpa.fi', 'www.kalpa.fi'):
+        return item
+    with KALPA_HEADLINE_LOCK:
+        cached = KALPA_HEADLINE_CACHE.get(url)
+    if cached and time.time() - cached[0] < 21600:
+        title = cached[1]
+    else:
+        title = ''
+        try:
+            req = Request(url, headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365/5.4)', 'Accept':'text/html'})
+            with urlopen(req, timeout=8) as response:
+                if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
+                raw = response.read(1_200_001)
+                if len(raw) > 1_200_000: raise ValueError('Page too large')
+                decoded = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+            title = kalpa_headline_from_html(decoded)
+        except (OSError, ValueError, TimeoutError, UnicodeError):
+            pass
+        with KALPA_HEADLINE_LOCK:
+            KALPA_HEADLINE_CACHE[url] = (time.time(), title)
+    if title:
+        item = dict(item)
+        item['title'] = title
+    return item
+
 def resolve_article_publication(item):
     url=str(item.get('url') or '')
     if not allowed_publisher(url):return item
@@ -855,6 +945,15 @@ def news():
         freshness_cutoff = time.time() - HISTORY_DAYS * 86400
         historical = [a for a in historical
                       if freshness_cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400]
+        # Replace incorrect titles previously stored in SQLite and newly found
+        # caption links BEFORE deduplication. Unresolved caption-only cards are hidden.
+        kalpa_rows = [a for a in historical if a.get('source') == 'KalPa.fi']
+        if kalpa_rows:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                corrected = list(pool.map(resolve_kalpa_headline, kalpa_rows[:120]))
+            by_url = {a['url']: a for a in corrected}
+            historical = [by_url.get(a['url'], a) for a in historical]
+        historical = [a for a in historical if a.get('source') != 'KalPa.fi' or valid_kalpa_headline(a.get('title'))]
         historical = remove_duplicate_articles(historical)
         historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
         # Only show articles whose public text could be verified.
