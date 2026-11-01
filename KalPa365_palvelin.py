@@ -27,7 +27,11 @@ FEEDS = {
     'Jatkoaika': ['https://www.jatkoaika.com/rss.xml'],
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
     'Yle.fi': [
+        # Ylen viralliset RSS-syötteet. Vain KalPaa käsittelevät jutut
+        # pääsevät läpi parse_feed()-funktion KalPa-aiherajauksesta.
         'https://yle.fi/rss/urheilu',
+        'https://yle.fi/rss/t/18-141764/fi',  # Pohjois-Savo
+        'https://yle.fi/rss/uutiset/tuoreimmat',
         'https://yle.fi/rss/tuoreimmat',
     ],
 }

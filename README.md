@@ -1,9 +1,21 @@
-# KalPa365 v3.5 – joukkueiden tunnukset ottelukorteissa
+# KalPa365 v3.6 — Yle-uutiset mukaan
 
-- Yläpalkki pysyy mustana (#000000), KalPan käyttäjän toimittama oikea logo säilyy.
-- Otteluissa näkyy kotijoukkueen tunnus ennen kotijoukkueen nimeä ja vierasjoukkueen tunnus ennen vierasjoukkueen nimeä.
-- KalPan logo on oikea käyttäjän toimittama kuva.
-- TPS:n, Lukon ja K-Espoon paikalliset SVG:t ovat **väliaikaisia, joukkueen nimellä merkittyjä tunnuksia, eivät seurojen virallisia logoja**. Ne voidaan korvata samannimisillä SVG-tiedostoilla ilman koodimuutoksia.
-- Palvelin tarjoaa logot paikallisesti /logos/...-poluista, joten ulkoinen kuvapalvelu ei voi rikkoa niitä.
-- Säilytä kaikki ZIP-tiedostot ja kansiorakenne GitHubiin ladattaessa.
-- Ottelutiedot tulevat edelleen ottelut.json-tiedostosta, eivät automaattisesti Liigasta.
+Pohjautuu v3.5-versioon: musta yläpalkki, KalPan logo, ottelukortit ja joukkueiden tunnukset säilyvät.
+
+## Muutos
+
+`KalPa365_palvelin.py` hakee nyt Yle.fi-lähteestä neljää Ylen virallista RSS-syötettä:
+- `https://yle.fi/rss/urheilu`
+- `https://yle.fi/rss/t/18-141764/fi` (Pohjois-Savo)
+- `https://yle.fi/rss/uutiset/tuoreimmat`
+- `https://yle.fi/rss/tuoreimmat`
+
+Vain KalPaan liittyvät artikkelit otetaan mukaan nykyisellä suodattimella. Sama artikkeli poistetaan kaksoiskappaleena URL-osoitteen perusteella. Jos yksi syöte ei vastaa, muut toimivat edelleen. Yle.fi näkyy uutislähdevalikossa, kun syötteistä löytyy KalPa-aiheisia artikkeleita.
+
+## Julkaisu
+
+Päivitä GitHubissa vain `KalPa365_palvelin.py` (halutessasi myös `index.html`, jossa versionumero v3.6). Renderin automaattinen deploy käynnistyy GitHub-päivityksestä, jos se on otettu käyttöön. Muut tiedostot ovat mukana täyden paketin vuoksi.
+
+## Tarkistukset
+
+Python-koodi on syntaksitarkistettu ja syöteparseri testattu paikallisella esimerkkisyötteellä. Ulkoista Render-palvelua tai Ylen RSS-verkkohaun toimintaa tässä ympäristössä ei ole testattu.
