@@ -1,12 +1,13 @@
-# KalPa365 v5.9 – suorituskyky
+# KalPa365 v6.0 — MTV:n oman sivustokartan uutishaku
 
-Pohjana v5.8. Vaihda GitHubissa vain `KalPa365_palvelin.py`.
+MTV:n RSS ja urheilusivun ennestään toimivat lähdehaut säilyvät. Lisätty MTV:n
+oma sitemap.xml uutisten löytämiseen ilman Google Newsia. Artikkeleiden
+julkaisupäivät luetaan alkuperäiseltä sivulta ja vain 30 päivän mittaiset,
+KalPa-aiheiset, julkisesti luettavat artikkelit hyväksytään.
 
-- RSS-, sivu- ja Liiga-lähteet haetaan rinnakkain (enintään 8 lähdettä kerrallaan).
-- 5 min tuore välimuisti; sen jälkeen enintään tunnin vanha lista näytetään heti ja päivitetään erillisessä palvelinsäikeessä.
-- Kylmäkäynnistyksessä tai yli tunnin vanhoilla tiedoilla odotetaan haun valmistumista.
-- Yksi päivitys kerrallaan (single flight).
-- `/api/sources` kertoo `duration_ms`-ajat ja `/api/news` koko koostamisen `build_duration_ms`-ajan.
-- Uutislähteitä, niiden säännöstöä, lukutilaa ja käyttöliittymää ei muutettu.
+Huomaa: MTV:n live-sivustokartan toimivuutta ei ole vahvistettu tässä ympäristössä.
+Sivustokartta voi olla rakenteeltaan eri kuin odotettu, jolloin haku voi edelleen
+tuottaa nolla artikkelia. /api/sources => MTV Uutiset => sitemap kertoo tilanteen.
 
-Huom. Artikkelikohtaiset tunnistevälimuistit olivat jo käytössä v5.8:ssa. Live-Render-nopeutta ei ole tässä todennettu.
+Asennus: korvaa GitHubin KalPa365_palvelin.py. Muut tiedostot ovat mukana
+vain täydellisyyden vuoksi.

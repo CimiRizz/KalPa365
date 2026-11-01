@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.9 — parallel news sources, single-flight refresh and stale-while-revalidate."""
+"""KalPa365 v6.0 — publisher sitemap discovery for MTV, v5.9 performance retained."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -1049,6 +1049,89 @@ def resolve_article_publication(item):
         item['published']=datetime.fromtimestamp(stamp,timezone.utc).isoformat()
     return item
 
+def fetch_mtv_sitemap():
+    """Find MTV's own recent KalPa article URLs without Google News.
+
+    Sitemap lastmod is used only to prioritize discovery, never as the
+    original publication date. Each article still passes the existing date
+    and full-public-text verification stages.
+    """
+    base = 'https://www.mtvuutiset.fi/sitemap.xml'
+    diagnostics = {'status': 'ok', 'sitemap': base, 'sitemaps_checked': 0,
+                   'urls_scanned': 0, 'matching_urls': 0, 'count': 0}
+    found, seen = [], set()
+    def read_xml(url):
+        req = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/6.0)',
+                                   'Accept': 'application/xml,text/xml,*/*'})
+        with urlopen(req, timeout=7) as response:
+            if not allowed_publisher(response.geturl()):
+                raise ValueError('Sitemap redirected outside publisher')
+            raw = response.read(4_000_001)
+            if len(raw) > 4_000_000: raise ValueError('Sitemap too large')
+        import gzip
+        if raw[:2] == b'\x1f\x8b': raw = gzip.decompress(raw)
+        return ET.fromstring(raw)
+    try:
+        root = read_xml(base)
+        # A sitemap index may contain many years of archives. Prefer URLs
+        # labelled recently modified and cap the network load to four maps.
+        entries = []
+        if local(root.tag) == 'sitemapindex':
+            for node in root:
+                loc = child_text(node, {'loc'})
+                modified = child_text(node, {'lastmod'})
+                if loc.startswith('https://www.mtvuutiset.fi/') and loc.endswith(('.xml', '.xml.gz')):
+                    entries.append((modified, loc))
+            entries.sort(reverse=True)
+            targets = [u for _, u in entries[:4]]
+        else:
+            targets = [base]
+        for url in targets:
+            try:
+                doc = root if url == base else read_xml(url)
+                diagnostics['sitemaps_checked'] += 1
+                for node in doc.iter():
+                    if local(node.tag) != 'url': continue
+                    link = child_text(node, {'loc'}).split('#')[0]
+                    diagnostics['urls_scanned'] += 1
+                    if not allowed_publisher(link): continue
+                    path = urlparse(link).path
+                    if not re.fullmatch(r'/artikkeli/[^/?#]+/\d{6,10}/?', path, re.I): continue
+                    if not re.search(r'kalpa(?:n|lle|ssa|sta|lta)?(?:-|/|$)', unquote(path), re.I): continue
+                    if link in seen: continue
+                    seen.add(link)
+                    found.append({'title': 'MTV Uutiset – KalPa', 'source': 'MTV Uutiset',
+                                  'url': link, 'summary': '', 'timestamp': 0, 'published': ''})
+                    if len(found) >= 80: break
+            except Exception as exc:
+                diagnostics.setdefault('page_errors', []).append(f'{type(exc).__name__}: {str(exc)[:90]}')
+            if len(found) >= 80: break
+        diagnostics['matching_urls'] = len(found)
+        diagnostics['count'] = len(found)
+        if diagnostics['sitemaps_checked'] == 0: diagnostics['status'] = 'error'
+    except Exception as exc:
+        diagnostics['status'] = 'error'
+        diagnostics['message'] = f'{type(exc).__name__}: {str(exc)[:130]}'
+    return found, diagnostics
+
+
+def resolve_mtv_headline(item):
+    if item.get('source') != 'MTV Uutiset' or item.get('title') != 'MTV Uutiset – KalPa':
+        return item
+    try:
+        req = Request(item['url'], headers={'User-Agent':'Mozilla/5.0 (compatible; KalPa365/6.0)'})
+        with urlopen(req, timeout=7) as response:
+            if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
+            raw = response.read(1_200_001)
+            if len(raw)>1_200_000: raise ValueError('Article too large')
+            document = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
+        title = kalpa_headline_from_html(document)
+        if title and valid_kalpa_headline(title):
+            item = dict(item, title=title)
+    except (OSError, ValueError, TimeoutError, UnicodeError): pass
+    return item
+
+
 def _timed_source(kind, source, targets=None):
     """Independent publisher fetch; failures do not cancel other publishers."""
     started = time.monotonic()
@@ -1057,6 +1140,8 @@ def _timed_source(kind, source, targets=None):
             articles, info = fetch(source, targets)
         elif kind == 'direct':
             articles, info = fetch_direct(source, targets)
+        elif kind == 'mtv_sitemap':
+            articles, info = fetch_mtv_sitemap()
         else:
             articles, info = fetch_liiga_news()
     except Exception as exc:
@@ -1072,7 +1157,8 @@ def _build_news():
     items=[]; sources={}
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
-            + [('liiga', 'Liiga.fi', None)])
+            + [('liiga', 'Liiga.fi', None)]
+            + [('mtv_sitemap', 'MTV Uutiset', None)])
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.
     with ThreadPoolExecutor(max_workers=SOURCE_WORKERS) as pool:
@@ -1081,6 +1167,8 @@ def _build_news():
         items.extend(found)
         if kind == 'direct':
             sources.setdefault(source, {})['direct_pages'] = info
+        elif kind == 'mtv_sitemap':
+            sources.setdefault(source, {})['sitemap'] = info
         else:
             sources[source] = info
     # Preserve RSS diagnostics if the same source also has direct pages,
@@ -1124,6 +1212,13 @@ def _build_news():
         by_url = {a['url']: a for a in corrected}
         historical = [by_url.get(a['url'], a) for a in historical]
     historical = [a for a in historical if a.get('source') != 'KalPa.fi' or valid_kalpa_headline(a.get('title'))]
+    mtv_candidates = [a for a in historical if a.get('source') == 'MTV Uutiset' and a.get('title') == 'MTV Uutiset – KalPa']
+    if mtv_candidates:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            fixed = list(pool.map(resolve_mtv_headline, mtv_candidates[:80]))
+        by_url = {a['url']: a for a in fixed}
+        historical = [by_url.get(a['url'], a) for a in historical]
+        historical = [a for a in historical if a.get('title') != 'MTV Uutiset – KalPa']
     historical = remove_duplicate_articles(historical)
     historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
     # Only show articles whose public text could be verified.
