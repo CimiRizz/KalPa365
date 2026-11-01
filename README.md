@@ -1,12 +1,12 @@
-KalPa365 v5.6 — SuomiKiekko-hakujen korjaus
+KalPa365 v5.7 — MTV Uutiset (yksi uusi lähde)
 
-- Google News ei ole käytössä.
-- SuomiKiekon suoran haun rinnalle lisätty julkaisijan omat RSS-vaihtoehdot (jos julkaisija tarjoaa ne).
-- SuomiKiekon etusivu mukana hakupaikoissa.
-- Artikkelitekstin lisäpoiminta, jos sivulta puuttuu tyypillinen article/main-HTML-merkintä.
-- /api/sources: SuomiKiekko -> direct_pages -> pages -> rejection_samples kertoo miksi haetut artikkelit hylätään.
-- Vain aidosti alle 30 päivän ikäiset, KalPaa koskevat, julkisesti luettavat artikkelit hyväksytään.
-- Muut lähteet, ottelut, logot ja käyttöliittymä säilytetty.
+Muutokset verrattuna toimivaan v5.6-versioon:
+- MTV Uutisten vanha 404-virheen palauttava RSS-osoite korvattu julkaisijan omalla syötteellä: https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat
+- Lisätty MTV:n oma urheilusivu: https://www.mtvuutiset.fi/tuoreimmat/urheilu
+- Vain /artikkeli/<otsake>/<numero>-muotoisia MTV:n artikkeleita poimitaan suoralta sivulta.
+- KalPa-aiheisuus, alkuperäinen julkaisuajankohta (30 päivää), maksuttomuus ja luettavuus tarkistetaan ennallaan.
+- Muut v5.6-lähteet ja käyttöliittymä ennallaan. Ei Google Newsia.
 
-Asennus: vaihda GitHubissa KalPa365_palvelin.py, odota Render-julkaisua ja tarkista /api/sources.
-Huom.: SuomiKiekon live-HTML:ää ei voitu suorittaa paikallisessa työtilassa verkkorajoituksen takia.
+Asennus: korvaa GitHubissa vain KalPa365_palvelin.py. Render-julkaisun jälkeen tarkista /api/sources -> MTV Uutiset.
+
+Rajoitus: paikallisen työtilan internet-yhteys MTV:n palvelimille on estetty. MTV:n RSS-osoite on tarkistettu julkisesta RSS-hakemistosta, mutta varsinaisia artikkeleita ei ole voitu hakea paikallisesti. MTV:n urheiluetusivun rajaus ei välttämättä löydä kaikkia KalPa-uutisia, jos ne eivät ole tuoreimpien joukossa.

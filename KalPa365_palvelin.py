@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.6 — improved direct SuomiKiekko source and rejection diagnostics."""
+"""KalPa365 v5.7 — direct MTV Uutiset RSS and sports page, preserving v5.6."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -32,7 +32,10 @@ FEEDS = {
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
     # Uudet kokeelliset suorat julkaisijasyötteet. Vain KalPa-aiheiset
     # otsikot/kuvaukset läpäisevät nykyisen suodatuksen.
-    'MTV Uutiset': ['https://www.mtvuutiset.fi/rss/uutiset.xml'],
+    'MTV Uutiset': [
+        # MTV publisher-owned RSS endpoint; replaces the obsolete /rss/uutiset.xml (404).
+        'https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat',
+    ],
     'Kiekkoareena': ['https://www.kiekkoareena.fi/feed/rss'],
     'Keskisuomalainen': ['https://www.ksml.fi/feed/rss'],
     'Etelä-Suomen Sanomat': ['https://www.ess.fi/feed/rss'],
@@ -258,6 +261,8 @@ DIRECT_PAGES = {
     'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
+    # Publisher's own sports index; only real article permalinks are considered.
+    'MTV Uutiset': ['https://www.mtvuutiset.fi/tuoreimmat/urheilu'],
 
 }
 
@@ -280,6 +285,8 @@ class DirectLinkParser(HTMLParser):
         path = urlparse(link).path
         if self.source == 'Jatkoaika':
             valid_path = path.startswith('/Uutiset/') or path.startswith('/LIIGA/')
+        elif self.source == 'MTV Uutiset':
+            valid_path = bool(re.fullmatch(r'/artikkeli/[^/?#]+/\d{6,10}/?', path, re.I))
         elif self.source == 'KalPa.fi':
             valid_path = bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', path))
         elif self.source == 'UrheiluSuomi':
