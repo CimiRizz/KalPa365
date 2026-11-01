@@ -713,6 +713,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/kalpa-logo.png' and (ROOT / 'kalpa-logo.png').is_file():
             payload = (ROOT / 'kalpa-logo.png').read_bytes()
             mime = 'image/png'
+        elif path in ('/logos/tps.svg', '/logos/lukko.svg', '/logos/k-espoo.svg'):
+            payload = (ROOT / path.lstrip('/')).read_bytes()
+            mime = 'image/svg+xml'
         elif path == '/ottelut.json':
             payload = (ROOT / 'ottelut.json').read_bytes()
             mime = 'application/json; charset=utf-8'
