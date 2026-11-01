@@ -1,0 +1,20 @@
+[
+  {
+    "date": "2026-11-09T18:30:00+02:00",
+    "home": "TPS",
+    "away": "KalPa",
+    "venue": "Turku"
+  },
+  {
+    "date": "2026-11-11T18:30:00+02:00",
+    "home": "Lukko",
+    "away": "KalPa",
+    "venue": "Rauma"
+  },
+  {
+    "date": "2026-11-13T18:30:00+02:00",
+    "home": "KalPa",
+    "away": "K-Espoo",
+    "venue": "Kuopio, Olvi Areena"
+  }
+]

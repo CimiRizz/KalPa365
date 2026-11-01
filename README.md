@@ -1,15 +1,7 @@
-KalPa365 v2.8 — Liiga-ottelut mukaan\n\nKorjaus: hyväksyy KalPan ottelutapahtumat myös Liigan koosteartikkeleista. Ei hyväksy pelkkiä historiallisia listamainintoja. Muut uutislähteet ja Builder-lukutila ennallaan.\n\nAsennus: lataa ZIP, pura ja korvaa GitHubissa viisi tiedostoa. Render julkaisee päivityksen. Tarkista /api/news → sources → Liiga.fi → pages → matches.\n
+KalPa365 v3.0 – seuraavat 3 ottelua
 
-## v2.9 — Ampparit / Liiga
+Näyttää kolme seuraavaa ottelua ottelut.json-tiedostosta, järjestää aikajärjestykseen ja piilottaa menneet. Päivittyy 5 minuutin välein. Ei muuta uutis- tai lukutoimintoja.
 
-Ampparit (https://www.ampparit.com/liiga) toimii täydentävänä uutisten löytölähteenä.
-Ohjelma lukee julkisen sivun otsikkolinkkejä ja hyväksyy KalPa-nimen sisältävät
-otsikot. Artikkelit avautuvat alkuperäisiltä julkaisijoilta; Ampparit ei ole
-artikkelien julkaisija. Aiemmat uutislähteet, Liiga.fi ja lukutila säilyvät.
+HUOM! ottelut.json sisältää aiemmin keskustelussa mainitut 9., 11. ja 13.11.2026 ottelut. Niitä ei ole tässä paketissa vahvistettu virallisesta lähteestä. Tarkista ottelut, päivät ja kellonajat osoitteesta https://kalpa.fi/fi-fi/ottelut/ ennen julkaisua. Päivitä JSON-tiedostoa aina otteluohjelman muuttuessa.
 
-Tarkista `/api/news` -> `sources` -> `Ampparit / Liiga`: `status`, `count` ja
-`message`. Jos sivusto estää automaattisen haun tai muuttaa HTML-rakennettaan,
-lähde voi palauttaa 0 uutista, mutta muut lähteet jatkavat toimintaansa.
-Ampparitista löytyvien otsikoiden aikaleima on hakuaika, koska julkaisuaikaa ei
-ole luotettavasti saatavissa otsikkolinkeistä. Tämä on väliaikainen rajoitus.
-Käytä lähdettä sivuston käyttöehtojen mukaisesti.
+Asennus: korvaa GitHub CimiRizz/KalPa365 -repossa paketin tiedostot. Varmista, että ottelut.json on repositorion juuressa. Renderin Start Command: python KalPa365_palvelin.py. Tarkista palvelussa /ottelut.json ja pääsivu.
