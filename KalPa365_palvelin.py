@@ -706,6 +706,13 @@ class Handler(BaseHTTPRequestHandler):
                 result={'status':'summary','paragraphs':[], 'message':'Artikkelin hakeminen ei onnistunut.'}
             payload=json.dumps(result,ensure_ascii=False).encode('utf-8')
             mime='application/json; charset=utf-8'
+        elif path == '/kalpa-logo.svg':
+            # Local image always works with the existing restrictive CSP.
+            payload = (ROOT / 'kalpa-logo.svg').read_bytes()
+            mime = 'image/svg+xml; charset=utf-8'
+        elif path == '/kalpa-logo.png' and (ROOT / 'kalpa-logo.png').is_file():
+            payload = (ROOT / 'kalpa-logo.png').read_bytes()
+            mime = 'image/png'
         elif path == '/ottelut.json':
             payload = (ROOT / 'ottelut.json').read_bytes()
             mime = 'application/json; charset=utf-8'
