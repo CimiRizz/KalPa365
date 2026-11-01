@@ -1,12 +1,12 @@
-KalPa365 v5.7 — MTV Uutiset (yksi uusi lähde)
+# KalPa365 v5.9 – suorituskyky
 
-Muutokset verrattuna toimivaan v5.6-versioon:
-- MTV Uutisten vanha 404-virheen palauttava RSS-osoite korvattu julkaisijan omalla syötteellä: https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat
-- Lisätty MTV:n oma urheilusivu: https://www.mtvuutiset.fi/tuoreimmat/urheilu
-- Vain /artikkeli/<otsake>/<numero>-muotoisia MTV:n artikkeleita poimitaan suoralta sivulta.
-- KalPa-aiheisuus, alkuperäinen julkaisuajankohta (30 päivää), maksuttomuus ja luettavuus tarkistetaan ennallaan.
-- Muut v5.6-lähteet ja käyttöliittymä ennallaan. Ei Google Newsia.
+Pohjana v5.8. Vaihda GitHubissa vain `KalPa365_palvelin.py`.
 
-Asennus: korvaa GitHubissa vain KalPa365_palvelin.py. Render-julkaisun jälkeen tarkista /api/sources -> MTV Uutiset.
+- RSS-, sivu- ja Liiga-lähteet haetaan rinnakkain (enintään 8 lähdettä kerrallaan).
+- 5 min tuore välimuisti; sen jälkeen enintään tunnin vanha lista näytetään heti ja päivitetään erillisessä palvelinsäikeessä.
+- Kylmäkäynnistyksessä tai yli tunnin vanhoilla tiedoilla odotetaan haun valmistumista.
+- Yksi päivitys kerrallaan (single flight).
+- `/api/sources` kertoo `duration_ms`-ajat ja `/api/news` koko koostamisen `build_duration_ms`-ajan.
+- Uutislähteitä, niiden säännöstöä, lukutilaa ja käyttöliittymää ei muutettu.
 
-Rajoitus: paikallisen työtilan internet-yhteys MTV:n palvelimille on estetty. MTV:n RSS-osoite on tarkistettu julkisesta RSS-hakemistosta, mutta varsinaisia artikkeleita ei ole voitu hakea paikallisesti. MTV:n urheiluetusivun rajaus ei välttämättä löydä kaikkia KalPa-uutisia, jos ne eivät ole tuoreimpien joukossa.
+Huom. Artikkelikohtaiset tunnistevälimuistit olivat jo käytössä v5.8:ssa. Live-Render-nopeutta ei ole tässä todennettu.

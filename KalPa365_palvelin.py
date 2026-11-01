@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v5.7 — direct MTV Uutiset RSS and sports page, preserving v5.6."""
+"""KalPa365 v5.9 — parallel news sources, single-flight refresh and stale-while-revalidate."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -17,7 +17,11 @@ TTL = 300
 DB_PATH = pathlib.Path(os.environ.get('KALPA365_DB', str(ROOT / 'kalpa365_history.sqlite3')))
 HISTORY_DAYS = 30
 LOCK = threading.Lock()
-CACHE = {'at': 0, 'data': None}
+CACHE = {'at': 0, 'data': None, 'refreshing': False}
+# Only one refresh is allowed even if multiple browsers request news at once.
+REFRESH_LOCK = threading.Lock()
+SOURCE_WORKERS = 8
+STALE_MAX_AGE = 3600  # After one hour, require a fresh response instead of serving old data.
 FREE_CACHE = {}
 FREE_CACHE_LOCK = threading.Lock()
 FEEDS = {
@@ -262,7 +266,10 @@ DIRECT_PAGES = {
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
     # Publisher's own sports index; only real article permalinks are considered.
-    'MTV Uutiset': ['https://www.mtvuutiset.fi/tuoreimmat/urheilu'],
+    'MTV Uutiset': [
+        'https://www.mtvuutiset.fi/tuoreimmat/urheilu',
+        'https://www.mtvuutiset.fi/liiga',
+    ],
 
 }
 
@@ -1042,73 +1049,146 @@ def resolve_article_publication(item):
         item['published']=datetime.fromtimestamp(stamp,timezone.utc).isoformat()
     return item
 
-def news():
-    with LOCK:
-        if CACHE['data'] is not None and time.time()-CACHE['at']<TTL: return CACHE['data']
-        items=[]; sources={}
-        for source,urls in FEEDS.items():
-            result,info=fetch(source,urls); items.extend(result); sources[source]=info
-        for source, pages in DIRECT_PAGES.items():
-            found, info = fetch_direct(source, pages)
-            items.extend(found)
+def _timed_source(kind, source, targets=None):
+    """Independent publisher fetch; failures do not cancel other publishers."""
+    started = time.monotonic()
+    try:
+        if kind == 'rss':
+            articles, info = fetch(source, targets)
+        elif kind == 'direct':
+            articles, info = fetch_direct(source, targets)
+        else:
+            articles, info = fetch_liiga_news()
+    except Exception as exc:
+        articles, info = [], {'status': 'error', 'count': 0,
+                              'message': f'{type(exc).__name__}: {str(exc)[:160]}'}
+    info['duration_ms'] = round((time.monotonic() - started) * 1000)
+    return kind, source, articles, info
+
+
+def _build_news():
+    """Build a complete snapshot; keep the previous one until it succeeds."""
+    started = time.monotonic()
+    items=[]; sources={}
+    work = ([('rss', source, urls) for source, urls in FEEDS.items()]
+            + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
+            + [('liiga', 'Liiga.fi', None)])
+    # Publisher fetches are independent network-bound tasks. Limit global
+    # parallelism; each fetch retains its original per-request timeouts.
+    with ThreadPoolExecutor(max_workers=SOURCE_WORKERS) as pool:
+        outcomes = list(pool.map(lambda job: _timed_source(*job), work))
+    for kind, source, found, info in outcomes:
+        items.extend(found)
+        if kind == 'direct':
             sources.setdefault(source, {})['direct_pages'] = info
-        liiga_items, liiga_info = fetch_liiga_news()
-        items.extend(liiga_items)
-        sources['Liiga.fi'] = liiga_info
-        seen=set(); unique=[]
-        for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
-            key=item['url'].split('?')[0].rstrip('/')
-            if key not in seen: seen.add(key); unique.append(item)
-        # Resolve dates on direct article pages BEFORE merging/filtering history.
-        # RSS dates remain unchanged; unknown dates are not fabricated.
-        undated=[a for a in unique if not float(a.get('timestamp') or 0)]
-        if undated:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                resolved=list(pool.map(resolve_article_publication,undated[:120]))
-            resolved_by_url={a['url']:a for a in resolved}
-            unique=[resolved_by_url.get(a['url'],a) for a in unique]
-        historical,history_status=history_merge(unique)
-        historical=[a for a in historical if allowed_publisher(str(a.get('url') or ''))]
-        # A direct HTML index has no reliable publication timestamp (timestamp=0).
-        # Never present such an article as current; publisher-search/RSS articles
-        # with a real timestamp remain eligible. This also cleans persisted history.
-        stored_undated=[a for a in historical if not float(a.get('timestamp') or 0)]
-        if stored_undated:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                fixed=list(pool.map(resolve_article_publication,stored_undated[:120]))
-            fixed_by_url={a['url']:a for a in fixed}
-            historical=[fixed_by_url.get(a['url'],a) for a in historical]
-        freshness_cutoff = time.time() - HISTORY_DAYS * 86400
-        historical = [a for a in historical
-                      if freshness_cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400]
-        # Replace incorrect titles previously stored in SQLite and newly found
-        # caption links BEFORE deduplication. Unresolved caption-only cards are hidden.
-        kalpa_rows = [a for a in historical if a.get('source') == 'KalPa.fi']
-        if kalpa_rows:
-            with ThreadPoolExecutor(max_workers=6) as pool:
-                corrected = list(pool.map(resolve_kalpa_headline, kalpa_rows[:120]))
-            by_url = {a['url']: a for a in corrected}
-            historical = [by_url.get(a['url'], a) for a in historical]
-        historical = [a for a in historical if a.get('source') != 'KalPa.fi' or valid_kalpa_headline(a.get('title'))]
-        historical = remove_duplicate_articles(historical)
-        historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
-        # Only show articles whose public text could be verified.
-        # This intentionally excludes unknown/paywalled links rather than guessing.
-        candidates = historical[:500]
-        with ThreadPoolExecutor(max_workers=10) as pool:
-            verified = list(pool.map(is_verified_free, candidates))
-        historical = [a for a, ok in zip(candidates, verified) if ok]
-        counts={name:sum(a.get('source')==name for a in historical) for name in sources}
-        candidate_counts={name:sum(a.get('source')==name for a in candidates) for name in sources}
-        for name in sources:
-            sources[name]['candidate_count'] = candidate_counts[name]
-            sources[name]['verified_free_count'] = counts[name]
-            sources[name]['rejected_count'] = candidate_counts[name] - counts[name]
-        data={'articles':historical[:150],'sources':sources,'source_counts':counts,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
-              'errors':[name for name,info in sources.items() if info.get('status')=='error'],
-              'status':'ok' if historical else ('error' if all(v.get('status')=='error' for v in sources.values()) else 'empty')}
-        CACHE.update(at=time.time(),data=data)
-        return data
+        else:
+            sources[source] = info
+    # Preserve RSS diagnostics if the same source also has direct pages,
+    # regardless of scheduling order.
+    for kind, source, found, info in outcomes:
+        if kind == 'direct':
+            sources[source]['direct_pages'] = info
+    
+    seen=set(); unique=[]
+    for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
+        key=item['url'].split('?')[0].rstrip('/')
+        if key not in seen: seen.add(key); unique.append(item)
+    # Resolve dates on direct article pages BEFORE merging/filtering history.
+    # RSS dates remain unchanged; unknown dates are not fabricated.
+    undated=[a for a in unique if not float(a.get('timestamp') or 0)]
+    if undated:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            resolved=list(pool.map(resolve_article_publication,undated[:120]))
+        resolved_by_url={a['url']:a for a in resolved}
+        unique=[resolved_by_url.get(a['url'],a) for a in unique]
+    historical,history_status=history_merge(unique)
+    historical=[a for a in historical if allowed_publisher(str(a.get('url') or ''))]
+    # A direct HTML index has no reliable publication timestamp (timestamp=0).
+    # Never present such an article as current; publisher-search/RSS articles
+    # with a real timestamp remain eligible. This also cleans persisted history.
+    stored_undated=[a for a in historical if not float(a.get('timestamp') or 0)]
+    if stored_undated:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            fixed=list(pool.map(resolve_article_publication,stored_undated[:120]))
+        fixed_by_url={a['url']:a for a in fixed}
+        historical=[fixed_by_url.get(a['url'],a) for a in historical]
+    freshness_cutoff = time.time() - HISTORY_DAYS * 86400
+    historical = [a for a in historical
+                  if freshness_cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400]
+    # Replace incorrect titles previously stored in SQLite and newly found
+    # caption links BEFORE deduplication. Unresolved caption-only cards are hidden.
+    kalpa_rows = [a for a in historical if a.get('source') == 'KalPa.fi']
+    if kalpa_rows:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            corrected = list(pool.map(resolve_kalpa_headline, kalpa_rows[:120]))
+        by_url = {a['url']: a for a in corrected}
+        historical = [by_url.get(a['url'], a) for a in historical]
+    historical = [a for a in historical if a.get('source') != 'KalPa.fi' or valid_kalpa_headline(a.get('title'))]
+    historical = remove_duplicate_articles(historical)
+    historical.sort(key=lambda a: float(a.get('timestamp') or 0), reverse=True)
+    # Only show articles whose public text could be verified.
+    # This intentionally excludes unknown/paywalled links rather than guessing.
+    candidates = historical[:500]
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        verified = list(pool.map(is_verified_free, candidates))
+    historical = [a for a, ok in zip(candidates, verified) if ok]
+    counts={name:sum(a.get('source')==name for a in historical) for name in sources}
+    candidate_counts={name:sum(a.get('source')==name for a in candidates) for name in sources}
+    for name in sources:
+        sources[name]['candidate_count'] = candidate_counts[name]
+        sources[name]['verified_free_count'] = counts[name]
+        sources[name]['rejected_count'] = candidate_counts[name] - counts[name]
+    data={'articles':historical[:150],'sources':sources,'source_counts':counts,'history_status':history_status,'updated':datetime.now(timezone.utc).isoformat(),
+          'errors':[name for name,info in sources.items() if info.get('status')=='error'],
+          'status':'ok' if historical else ('error' if all(v.get('status')=='error' for v in sources.values()) else 'empty')}
+    data['build_duration_ms'] = round((time.monotonic() - started) * 1000)
+    return data
+
+
+def _refresh_snapshot():
+    try:
+        result = _build_news()
+        with LOCK:
+            CACHE['data'] = result
+            CACHE['at'] = time.time()
+    except Exception as exc:
+        print(f'KalPa365 refresh failed: {type(exc).__name__}: {exc}', flush=True)
+    finally:
+        with LOCK:
+            CACHE['refreshing'] = False
+        REFRESH_LOCK.release()
+
+
+def news():
+    now = time.time()
+    with LOCK:
+        previous = CACHE['data']
+        age = now - CACHE['at']
+        if previous is not None and age < TTL:
+            return previous
+        # Return stale results instantly while a single background refresh
+        # runs. This path has no unbounded thread creation.
+        if previous is not None and age < STALE_MAX_AGE:
+            if not CACHE['refreshing'] and REFRESH_LOCK.acquire(blocking=False):
+                CACHE['refreshing'] = True
+                threading.Thread(target=_refresh_snapshot, daemon=True,
+                                 name='KalPa365-news-refresh').start()
+            return {**previous, 'stale': True, 'refreshing': CACHE['refreshing']}
+
+    # Cold start or excessively stale snapshot: only one caller fetches;
+    # concurrent callers wait for the same refresh instead of duplicating it.
+    if REFRESH_LOCK.acquire(blocking=False):
+        with LOCK:
+            CACHE['refreshing'] = True
+        _refresh_snapshot()
+    else:
+        with REFRESH_LOCK:
+            pass
+    with LOCK:
+        if CACHE['data'] is not None:
+            return CACHE['data']
+    return {'articles': [], 'sources': {}, 'source_counts': {}, 'status': 'error',
+            'errors': ['Initial news refresh failed'], 'updated': datetime.now(timezone.utc).isoformat()}
 
 class ReaderParser(HTMLParser):
     """Collect public article paragraphs and JSON-LD NewsArticle content."""
