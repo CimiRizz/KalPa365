@@ -1,11 +1,9 @@
-# KalPa365 v3.8 – joukkueiden logot näkyviin
+# KalPa365 v3.9 — lisää uutislähteitä
 
-Kaikkien 17 joukkueen JPG-logot on upotettu suoraan `index.html`-tiedostoon data-URI-kuvina. Selain ei enää pyydä erillisiä `/logos/*.jpg`-osoitteita, joten logot näkyvät myös silloin, kun `logos`-kansio ei ole päätynyt julkaisuun tai palvelimen reititys ei ole päivittynyt. Nykyinen CSP sallii `img-src data:`.
+Pohjana v3.8. Säilyttää kaikki 17 logoa, mustan yläpalkin, ottelut ja aiemmat lähteet.
 
-## Asennus
+Uudet kokeelliset RSS-lähteet: MTV Uutiset, Kiekkoareena, Keskisuomalainen, Etelä-Suomen Sanomat, Karjalainen ja Kaleva.
 
-1. Päivitä vähintään `index.html` GitHubiin.
-2. Varmista Renderissä uusi julkaisu ja päivitä sivu Ctrl+F5.
-3. Säilytä halutessasi muutkin paketin tiedostot; Yle-uutiset, musta yläpalkki ja ottelut säilyvät.
+**Tärkeää:** Uusien lähteiden RSS-osoitteita tai saatavuutta ei ole voitu varmentaa verkkoyhteydellä. Sovellus näyttää lähdekohtaiset virheet `/api/news`-rajapinnan `sources`-kentässä. Tyhjät/epäonnistuvat syötteet eivät estä muita lähteitä. Kaikki uutiset suodatetaan KalPa-aiheisuuden perusteella.
 
-Tarkistus: jokainen 17 upotetusta JPG-kuvasta on luettu lähdetiedostosta. HTML:n JavaScriptin syntaksitarkistus tehty Node.js:llä, mikäli käytettävissä.
+Asennus: korvaa GitHubissa vain `KalPa365_palvelin.py`. Muut tiedostot mukana täydellisessä paketissa.

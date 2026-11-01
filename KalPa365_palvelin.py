@@ -26,6 +26,15 @@ FEEDS = {
     ],
     'Jatkoaika': ['https://www.jatkoaika.com/rss.xml'],
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
+    # Uudet kokeelliset suorat julkaisijasyötteet. Vain KalPa-aiheiset
+    # otsikot/kuvaukset läpäisevät nykyisen suodatuksen.
+    'MTV Uutiset': ['https://www.mtvuutiset.fi/rss/uutiset.xml'],
+    'Kiekkoareena': ['https://www.kiekkoareena.fi/feed/rss'],
+    'Keskisuomalainen': ['https://www.ksml.fi/feed/rss'],
+    'Etelä-Suomen Sanomat': ['https://www.ess.fi/feed/rss'],
+    'Karjalainen': ['https://www.karjalainen.fi/feed/rss'],
+    'Kaleva': ['https://www.kaleva.fi/feed/rss'],
+
     'Yle.fi': [
         # Ylen viralliset RSS-syötteet. Vain KalPaa käsittelevät jutut
         # pääsevät läpi parse_feed()-funktion KalPa-aiherajauksesta.
@@ -36,7 +45,8 @@ FEEDS = {
     ],
 }
 
-# Jatkoajan ja Savon Sanomien syöteosoitteet ovat kokeellisia.
+# Osa julkaisijoiden RSS-osoitteista on kokeellisia.
+# Virheet raportoidaan lähdekohtaisesti eikä niitä peitetä.
 # Lähteen mahdollinen virhe näkyy /api/news-vastauksen sources-kentässä.
 POSITIVE = re.compile(r'(?<!\w)kalpa(?:n|lle|lta|ssa|sta|an|a)?(?!\w)|kuopion\s+kalpa', re.I)
 NEGATIVE = re.compile(r'kalpa(?:na|lla)?\s+(?:ruoka|esine|kukka)|kalpa\s+miekk', re.I)
@@ -48,6 +58,12 @@ ALLOWED_PUBLISHERS = (
     'savonsanomat.fi',
     'liiga.fi',
     'yle.fi',
+    'mtvuutiset.fi',
+    'kiekkoareena.fi',
+    'ksml.fi',
+    'ess.fi',
+    'karjalainen.fi',
+    'kaleva.fi',
 )
 
 def allowed_publisher(url):
