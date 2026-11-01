@@ -7,7 +7,7 @@
 
 .matches{margin:0 0 24px}.matches h2{font-size:23px;margin:0 0 12px}.matches-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.match{background:#fff;border:1px solid #dce8df;border-radius:15px;padding:18px;box-shadow:0 4px 16px #0b2e1c0a}.match-date{font-size:13px;font-weight:750;color:#176b4e}.match-teams{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:18px;font-weight:800;margin:10px 0}.team-inline{display:inline-flex;align-items:center;gap:6px;min-width:0}.team-logo{width:34px;height:34px;object-fit:contain;flex:none}.team-logo-fallback{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-size:11px;line-height:1;font-weight:900;background:#edf0ef;color:#172a22;border:2px solid #b8c1be}.match-dash{color:#73847a}@media(max-width:450px){.match-teams{font-size:16px}.team-logo,.team-logo-fallback{width:28px;height:28px}}.match-location{font-size:13px;color:#62746a}.matches-note{font-size:12px;color:#6c7d74;margin:9px 0 0}@media(max-width:720px){.matches-grid{grid-template-columns:1fr}}
 </style></head><body><header><div class="brand"><div class="mark"><img class="kalpa-logo" src="/kalpa-logo.png" onerror="this.onerror=null;this.src='/kalpa-logo.svg'" alt="KalPan logo" width="70" height="76"></div><div><h1>KalPa365</h1><p>Kaikki KalPasta. Vuoden jokaisena päivänä.</p></div></div></header>
-<main><section class="matches" aria-label="KalPan seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: KalPa365:n ottelutiedosto. Tarkista muutokset KalPan virallisesta otteluohjelmasta.</p></section><div class="bar"><input id="search" type="search" placeholder="Hae KalPa-uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan KalPa-uutisia…</div><div id="grid" class="grid"></div><p class="note">KalPa365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin KalPa365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole KalPan ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">KalPa365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>KalPa365 · Versio 1.8 · Seuraavat 3 ottelua · v3.6</footer>
+<main><section class="matches" aria-label="KalPan seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: KalPa365:n ottelutiedosto. Tarkista muutokset KalPan virallisesta otteluohjelmasta.</p></section><div class="bar"><input id="search" type="search" placeholder="Hae KalPa-uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan KalPa-uutisia…</div><div id="grid" class="grid"></div><p class="note">KalPa365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin KalPa365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole KalPan ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">KalPa365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>KalPa365 · Versio 1.8 · Seuraavat 3 ottelua · v3.7</footer>
 <script>
 const $=id=>document.getElementById(id);let articles=[];let lastUpdate='';let readerLastFocus=null;
 const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -21,11 +21,30 @@ $('grid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]')
 
 // Joukkueiden logot ovat paikallisia tiedostoja: ei ulkoisia kuvapalveluita.
 const TEAM_LOGOS={
- 'kalpa':'/kalpa-logo.png',
- 'tps':'/logos/tps.svg',
- 'lukko':'/logos/lukko.svg',
- 'k-espoo':'/logos/k-espoo.svg',
- 'kiekko-espoo':'/logos/k-espoo.svg'
+ "ässät":"/logos/assat.jpg",
+ "assat":"/logos/assat.jpg",
+ "hifk":"/logos/hifk.jpg",
+ "ifk":"/logos/hifk.jpg",
+ "hpk":"/logos/hpk.jpg",
+ "ilves":"/logos/ilves.jpg",
+ "jokerit":"/logos/jokerit.jpg",
+ "jukurit":"/logos/jukurit.jpg",
+ "jyp":"/logos/jyp.jpg",
+ "kalpa":"/logos/kalpa.jpg",
+ "kärpät":"/logos/karpat.jpg",
+ "karpat":"/logos/karpat.jpg",
+ "k-espoo":"/logos/kiekko-espoo.jpg",
+ "kiekko-espoo":"/logos/kiekko-espoo.jpg",
+ "kiekko-espoo-blues":"/logos/kiekko-espoo.jpg",
+ "kookoo":"/logos/kookoo.jpg",
+ "lukko":"/logos/lukko.jpg",
+ "pelicans":"/logos/pelicans.jpg",
+ "saipa":"/logos/saipa.jpg",
+ "sport":"/logos/sport.jpg",
+ "vaasan-sport":"/logos/sport.jpg",
+ "tappara":"/logos/tappara.jpg",
+ "tps":"/logos/tps.jpg",
+ "hc-tps":"/logos/tps.jpg"
 };
 function teamHtml(name){
  const n=String(name||'');

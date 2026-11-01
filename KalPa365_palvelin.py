@@ -689,6 +689,8 @@ def article_for(original):
     return {'status':'full','paragraphs':paragraphs[:100],'original_url':original,
             'extraction':'html' if paragraphs is visible else 'jsonld'}
 
+TEAM_LOGO_FILES = frozenset({'kiekko-espoo.jpg', 'jukurit.jpg', 'jyp.jpg', 'sport.jpg', 'ilves.jpg', 'saipa.jpg', 'assat.jpg', 'karpat.jpg', 'tps.jpg', 'hpk.jpg', 'kookoo.jpg', 'pelicans.jpg', 'hifk.jpg', 'kalpa.jpg', 'tappara.jpg', 'lukko.jpg', 'jokerit.jpg'})
+
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -717,9 +719,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/kalpa-logo.png' and (ROOT / 'kalpa-logo.png').is_file():
             payload = (ROOT / 'kalpa-logo.png').read_bytes()
             mime = 'image/png'
-        elif path in ('/logos/tps.svg', '/logos/lukko.svg', '/logos/k-espoo.svg'):
-            payload = (ROOT / path.lstrip('/')).read_bytes()
-            mime = 'image/svg+xml'
+        elif path.startswith('/logos/') and path.rsplit('/', 1)[-1] in TEAM_LOGO_FILES:
+            payload = (ROOT / 'logos' / path.rsplit('/', 1)[-1]).read_bytes()
+            mime = 'image/jpeg'
         elif path == '/ottelut.json':
             payload = (ROOT / 'ottelut.json').read_bytes()
             mime = 'application/json; charset=utf-8'

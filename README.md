@@ -19,3 +19,14 @@ Päivitä GitHubissa vain `KalPa365_palvelin.py` (halutessasi myös `index.html`
 ## Tarkistukset
 
 Python-koodi on syntaksitarkistettu ja syöteparseri testattu paikallisella esimerkkisyötteellä. Ulkoista Render-palvelua tai Ylen RSS-verkkohaun toimintaa tässä ympäristössä ei ole testattu.
+
+
+## v3.7 – kaikki joukkueiden logot
+
+Kaikki käyttäjän toimittamat 17 seuratunnusta ovat paikallisia JPG-tiedostoja kansiossa `logos/`.
+Ottelukortti näyttää logon kummankin joukkueen nimen edessä. Tuetut kirjoitusasut
+sisältävät mm. Ässät/Assat, Kärpät/Karpat, K-Espoo/Kiekko-Espoo.
+Jokerit-logo on mukana käyttäjän pyynnöstä, vaikka joukkue ei välttämättä kuulu kuluvan kauden Liigaan.
+
+Päivitä GitHubiin koko ZIP:n sisältö, erityisesti `index.html`,
+`KalPa365_palvelin.py` ja `logos/`-kansio. Ottelutiedot eivät muutu.
