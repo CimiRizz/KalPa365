@@ -1,8 +1,14 @@
-# KalPa365 v6.11 — Jatkoajan KalPa-keskustelujen RSS-kokeilu
+# KalPa365 v6.12 – RSS-tiedoston tuonti selaimessa
 
-- Vaihda GitHubissa vain `KalPa365_palvelin.py` ja `index.html`. Muut tiedostot voi säilyttää nykyisinä.
-- `/api/forum` lukee `https://keskustelu.jatkoaika.com/forums/kalpa.161/index.rss`.
-- Näyttää kolme viimeksi päivittynyttä KESKUSTELUKETJUA — RSS:n sisältökenttä on ketjun aloitusviesti eikä viimeisin viesti.
-- Toimivaa XML-rakennetta testattu käyttäjän toimittamalla RSS-tiedostolla. Renderin suoraa RSS-pääsyä ei ole vahvistettu.
-- Jos Render saa 403-virheen myös RSS-osoitteesta, pääsivu näyttää selkeän linkin keskustelupalstalle eikä yritä kiertää estoa.
-- Muut uutislähteet ja käyttäjäliittymän järjestys säilyvät.
+## Asennus
+Vaihda GitHubissa **vain `index.html`**. Python-palvelin ja Renderin asetukset säilyvät.
+
+## Käyttö
+1. Avaa https://keskustelu.jatkoaika.com/forums/kalpa.161/index.rss omalla selaimellasi.
+2. Lataa `index.rss` tietokoneelle tai puhelimeen.
+3. KalPa365:ssä paina **Tuo RSS-tiedosto** kolmen uusimman uutisen alapuolelta.
+4. Valitse lataamasi tiedosto. Kolme viimeksi päivittynyttä keskusteluketjua näkyy osiossa.
+
+Tiedosto luetaan **vain käyttäjän selaimessa** ja kolme keskustelutietuetta tallennetaan selaimen `localStorage`-muistiin. Mitään ei lähetetä Renderille. Tiedot säilyvät sivun latausten välillä samalla selaimella ja laitteella, mutta eivät siirry automaattisesti toiselle laitteelle. Uusi RSS pitää tuoda käsin päivitystä varten.
+
+RSS näyttää ketjut ja niiden päivitysajat, ei kolmea uusinta yksittäistä viestiä. Jatkoajan 403-esto ei vaikuta tähän tiedostotuontiin. Nykyiset uutistoiminnot eivät muutu.
