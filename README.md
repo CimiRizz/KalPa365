@@ -1,22 +1,11 @@
-KalPa365 v6.9 — Jatkoaika Chromium -kokeilu
+KalPa365 v6.9.1 — Chromium-asennuksen korjaus
 
-Päivitys v6.8:sta. Nykyinen index.html ennallaan. Jatkoajan keskustelupalsta ei sisälly.
+Käyttäjän /api/sources osoitti: Playwright on asennettu, mutta Chromium-binääri puuttuu Renderistä. Jatkoajan verkkoyhteyttä ei vielä testattu.
 
-HUOM: Vain KalPa365_palvelin.py:n korvaaminen EI riitä, ellei Renderissä ole
-Playwright + Chromium asennettu. Renderin Build Command esimerkiksi:
+GitHub: lisää/korvaa KalPa365_palvelin.py, requirements.txt ja render-build.sh.
+Render -> Settings -> Build Command: bash render-build.sh
+Render -> Manual Deploy -> Clear build cache & deploy (tai deploy ja tarkista loki).
 
-    pip install -r requirements.txt && python -m playwright install chromium
+Lokissa täytyy näkyä "Chromium OK:". Jos kirjastoihin liittyvä virhe estää käynnistyksen, Renderin palvelinympäristö voi vaatia erillisen järjestelmäriippuvuuksien asennuksen tai Docker-kuvan. Älä oleta että Jatkoaika toimii ennen /api/sources -testiä.
 
-Jos järjestelmäkirjastot puuttuvat, Chromium voi vaatia yhteensopivan Render-
-ympäristön tai erilliset käyttöjärjestelmäriippuvuudet. Paketti ei muuta
-Renderin asetuksia automaattisesti.
-
-Asetus JATKOAIKA_BROWSER=1 (oletus) yrittää Chromium-hakua. Kytke
-pois JATKOAIKA_BROWSER=0, jos työympäristössä ei ole selainta.
-
-/api/sources -> Jatkoaika näyttää status: ok / blocked / error /
-dependency_missing ja http_status-arvon. Jos 403 toistuu myös selaimessa,
-keräin ei yritä ohittaa estoa eikä näytä keksittyjä artikkeleita.
-
-Säilyttää alkuperäiset 30 päivän ja maksuttomuussuodatukset,
-muut uutislähteet ja kolmen uutisen käyttöliittymän.
+Muut lähteet ja käyttöliittymä pysyvät v6.9 mukaisina. Ei CAPTCHA-kiertoa.
