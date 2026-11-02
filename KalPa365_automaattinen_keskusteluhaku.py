@@ -69,6 +69,10 @@ def get_posts(page):
                 link=article.select_one('a[href*="/posts/"], a[href*="/post-"]')
                 post_id=(article.get('id') or '').removeprefix('js-post-').removeprefix('post-')
                 link_url=urljoin(page.url,link.get('href','')) if link else (urljoin(page.url,'/posts/'+post_id+'/') if post_id.isdigit() else url.rstrip('/')+'/latest')
+                # Normalize XenForo thread-post redirects to stable post permalinks.
+                found=re.search(r'(?:/post-|/posts/)(\d+)(?:/|$)',link_url)
+                if found:
+                    link_url='https://keskustelu.jatkoaika.com/posts/'+found.group(1)+'/'
                 if ts>0 and content and link_url.startswith('https://keskustelu.jatkoaika.com/'):
                     results.append(dict(topic=title,content=content,timestamp=ts,url=link_url))
         except Exception as exc:

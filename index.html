@@ -30,11 +30,19 @@ function render(){
   $('grid').innerHTML=filtered.length?filtered.map(newsCard).join(''):'<div class="empty">Ei muita KalPa-uutisia valituilla hakuehdoilla.</div>';
 }
 function forumLatestUrl(raw){
-  try {const u=new URL(raw);if(u.protocol!=='https:'||u.hostname!=='keskustelu.jatkoaika.com')return '#';
-    if(/^\/posts\/\d+/.test(u.pathname))return u.href;
-    if(!/^\/threads\//.test(u.pathname))return '#';
-    u.hash=''; u.search='';u.pathname=u.pathname.replace(/\/(?:latest|unread)\/?$/,'').replace(/\/page-\d+\/?$/,'').replace(/\/$/,'')+'/latest';return u.href;
-  }catch(e){return '#';}
+  try {
+    const u=new URL(raw);
+    if(u.protocol!=='https:' || u.hostname!=='keskustelu.jatkoaika.com') return '#';
+    // XenForo permanent post URL: /posts/12345/.
+    // The collector may supply a thread URL ending /post-12345.
+    const match=u.pathname.match(/(?:\/post-|\/posts\/)(\d+)(?:\/|$)/);
+    if(match) return 'https://keskustelu.jatkoaika.com/posts/'+match[1]+'/';
+    if(!/^\/threads\//.test(u.pathname)) return '#';
+    // Last-page fallback when no post ID is available.
+    u.hash='';u.search='';
+    u.pathname=u.pathname.replace(/\/(?:latest|unread)\/?$/,'').replace(/\/page-\d+\/?$/,'').replace(/\/$/,'')+'/latest';
+    return u.href;
+  } catch(e){return '#';}
 }
 async function loadAutomaticForum(){
  const target=$('forumGrid');

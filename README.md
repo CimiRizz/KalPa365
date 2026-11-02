@@ -15,3 +15,5 @@ py -u .\KalPa365_automaattinen_keskusteluhaku.py
 Koska aiempi tunniste näkyi keskustelussa, vaihda se **sekä Renderissä että Windowsissa** uuteen satunnaiseen arvoon. Älä lähetä tunnistetta keskusteluun.
 
 Huom: Viestien haku onnistuu vain, jos Jatkoaika näyttää koneella luettavissa olevat keskustelusivut ja päiväykset. Kolme uusinta viestiä tarkoittaa hakijan tarkistamista ketjuista löydettyjä kolmea uusinta päivättyä viestiä.
+
+KalPa365 v6.16: corrected forum card links to individual XenForo post permalinks (/posts/ID/). Original layout unchanged. Replace index.html on GitHub; optional collector replacement for future saved links.
