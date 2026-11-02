@@ -1,12 +1,11 @@
-KalPa365 v6.9.2 — Chromium mukana Render-julkaisussa
+# KalPa365 v6.10 – KalPa-keskustelujen kolme uusinta viestiä
 
-Edellisen raportin Jatkoaika-virhe: "Executable doesn't exist at /opt/render/.cache/ms-playwright/...". Vaikka build-vaiheessa näytettiin Chromium OK, selain saattoi päätyä rakennusvaiheen kotihakemiston välimuistiin, joka ei säily ajonaikaisessa palvelussa.
+Perustuu v6.9.2-versioon. Uusi erillinen `/api/forum`-rajapinta hakee KalPan Jatkoaika-keskustelupalstan kolmea tuoreinta luettavissa olevaa viestiä. Näyttöjärjestys: kolme ottelua, kolme uutista, kolme keskusteluviestiä, haku ja loput uutiset.
 
-Tämä paketti käyttää PLAYWRIGHT_BROWSERS_PATH=0 sekä asennuksessa että palvelimessa. Chromium asennetaan Playwright-paketin sisälle, jolloin se kulkee palvelun julkaisuartifaktin mukana.
+## Asennus
 
-1. GitHub: korvaa KalPa365_palvelin.py ja render-build.sh. Varmista että requirements.txt on mukana.
-2. Render Build Command: bash render-build.sh
-3. Render: Clear build cache & deploy. Varmista lokista "Chromium bundled OK:".
-4. Kun Render sanoo Live, avaa /api/sources ja tarkista Jatkoaika-status.
+Korvaa GitHubissa `KalPa365_palvelin.py`, `index.html` ja `requirements.txt`. Säilytä nykyinen `render-build.sh` ja Build Command `bash render-build.sh`.
 
-Jatkoaika voi edelleen vastata 403, jolloin tämä asennuskorjaus ei poista julkaisijan estoa. Muut lähteet ja index.html säilyvät ennallaan. Ei CAPTCHA-kiertoa.
+Keskusteluviestien haku ei kierrä mahdollista HTTP 403 -estoa. Jos palsta estää palvelimen, osio ilmoittaa ettei viestejä saatu; muita uutislähteitä ei rikota.
+
+Uusi päätepiste: `/api/forum`. Tämä on oikeiden viestien, ei pelkkien otsikoiden, kokeilu. Ajonaikaista toimintaa Renderissä ei ole vahvistettu.

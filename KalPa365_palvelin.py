@@ -1478,6 +1478,100 @@ def article_for(original, verify_only=False):
 
 TEAM_LOGO_FILES = frozenset({'kiekko-espoo.jpg', 'jukurit.jpg', 'jyp.jpg', 'sport.jpg', 'ilves.jpg', 'saipa.jpg', 'assat.jpg', 'karpat.jpg', 'tps.jpg', 'hpk.jpg', 'kookoo.jpg', 'pelicans.jpg', 'hifk.jpg', 'kalpa.jpg', 'tappara.jpg', 'lukko.jpg', 'jokerit.jpg'})
 
+
+# v6.10 — KalPa discussion messages, a separate endpoint, not news articles.
+FORUM_URL = 'https://keskustelu.jatkoaika.com/forums/kalpa.161/'
+FORUM_LOCK = threading.Lock()
+FORUM_CACHE = {'at': 0, 'data': None}
+
+def fetch_kalpa_forum():
+    """Three most recent *messages*, extracted from latest thread posts.
+
+    The forum may refuse requests; never circumvent CAPTCHA or HTTP 403.
+    Distinguish actual post excerpts from topic titles.
+    """
+    from bs4 import BeautifulSoup
+    from urllib.error import HTTPError
+    result = {'status': 'empty', 'messages': [], 'source': FORUM_URL}
+    headers = {'User-Agent': 'KalPa365/6.10 (+public KalPa conversation links)',
+               'Accept': 'text/html,application/xhtml+xml'}
+    def get(url):
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=9) as resp:
+            final = resp.geturl()
+            if urlparse(final).hostname != 'keskustelu.jatkoaika.com':
+                raise ValueError('Unexpected forum redirect')
+            if resp.status != 200: raise ValueError('HTTP ' + str(resp.status))
+            data = resp.read(900_000)
+            return BeautifulSoup(data, 'html.parser')
+    try:
+        page = get(FORUM_URL)
+        if 'captcha' in page.get_text(' ', strip=True)[:400].lower():
+            return dict(result, status='blocked', message='Forum asks for verification')
+        threads=[]
+        for row in page.select('.structItem--thread'):
+            link = row.select_one('.structItem-title a[href*="/threads/"]')
+            if not link: continue
+            title = link.get_text(' ', strip=True)
+            latest = row.select_one('.structItem-cell--latest a[href*="/posts/"]')
+            if not latest:
+                latest = row.select_one('.structItem-cell--latest a[href*="/threads/"]')
+            stamp_tag = row.select_one('.structItem-cell--latest time[data-time]')
+            author = row.select_one('.structItem-cell--latest .username')
+            ts = int(stamp_tag.get('data-time',0)) if stamp_tag else 0
+            target = urljoin(FORUM_URL,latest['href']) if latest and latest.get('href') else urljoin(FORUM_URL,link['href'])
+            if urlparse(target).hostname != 'keskustelu.jatkoaika.com': continue
+            threads.append((ts,title,author.get_text(' ',strip=True) if author else '',target))
+        threads.sort(key=lambda x:x[0],reverse=True)
+        result['thread_candidates'] = len(threads)
+        seen=set()
+        for ts,title,author,target in threads[:9]:
+            try:
+                thread=get(target)
+                posts=thread.select('article.message')
+                if not posts: continue
+                post = posts[-1]
+                content = post.select_one('.message-body .bbWrapper') or post.select_one('.message-body')
+                if not content: continue
+                for node in content.select('blockquote, .bbCodeBlock, .message-expandWrapper, script, style'):
+                    node.decompose()
+                body = ' '.join(content.stripped_strings)
+                body = re.sub(r'\s+',' ',body).strip()
+                if not body: continue
+                post_id=post.get('id','')
+                msg_url=urljoin(target,'#'+post_id) if post_id else target
+                if msg_url in seen: continue
+                seen.add(msg_url)
+                post_time=post.select_one('time[data-time]')
+                if post_time:
+                    try: ts=int(post_time['data-time'])
+                    except (ValueError,TypeError): pass
+                post_author=post.select_one('.message-name .username') or post.select_one('a.username')
+                result['messages'].append({'topic':title,'author':post_author.get_text(' ',strip=True) if post_author else author,
+                    'excerpt':body[:450], 'url':msg_url, 'timestamp':ts})
+                if len(result['messages'])>=3: break
+            except (HTTPError, OSError, ValueError, TimeoutError): continue
+        result['messages'].sort(key=lambda m:m['timestamp'],reverse=True)
+        result['status']='ok' if result['messages'] else 'empty'
+        if not result['messages']:
+            result['message']='No readable recent posts found in forum'
+    except HTTPError as e:
+        result.update(status='blocked' if e.code in (401,403,429) else 'error', http_status=e.code,
+                      message='Forum HTTP '+str(e.code))
+    except (OSError, ValueError, TimeoutError) as e:
+        result.update(status='error',message=str(e)[:180])
+    return result
+
+def forum_messages():
+    now=time.time()
+    with FORUM_LOCK:
+        if FORUM_CACHE['data'] is not None and now-FORUM_CACHE['at']<300:
+            return FORUM_CACHE['data']
+    data=fetch_kalpa_forum()
+    with FORUM_LOCK:
+        FORUM_CACHE.update(at=time.time(),data=data)
+    return data
+
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -1488,6 +1582,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
+        elif path == '/api/forum':
+            payload=json.dumps(forum_messages(),ensure_ascii=False).encode('utf-8')
+            mime='application/json; charset=utf-8'
         elif path == '/api/news':
             payload = json.dumps(news(), ensure_ascii=False).encode('utf-8')
             mime = 'application/json; charset=utf-8'
