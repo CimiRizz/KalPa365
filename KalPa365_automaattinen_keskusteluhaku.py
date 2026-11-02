@@ -17,11 +17,8 @@ if not BASE.startswith('https://') or not TOKEN:
     raise SystemExit('Aseta KALPA365_URL (https://...) ja KALPA_FORUM_TOKEN.')
 
 def get_posts(page):
-    page.goto(FEED,wait_until='domcontentloaded',timeout=30000)
-    raw=page.locator('body').inner_text()
-    # Browser may render RSS as raw XML or as an XML tree.
-    response=page.request.get(FEED,timeout=20000)
-    if not response.ok: raise RuntimeError('RSS HTTP '+str(response.status))
+    response=page.goto(FEED,wait_until='domcontentloaded',timeout=30000)
+    if not response or not response.ok: raise RuntimeError('RSS-haku estetty')
     root=ET.fromstring(response.body())
     threads=[]
     for item in root.findall('./channel/item')[:10]:
@@ -42,8 +39,9 @@ def get_posts(page):
                 content=body.get_text(' ',strip=True)[:3000]
                 time_tag=article.select_one('time[data-time]')
                 ts=int(time_tag.get('data-time','0')) if time_tag else 0
-                link=article.select_one('a[href*="/post-"], a[href*="/posts/"]')
-                link_url=urljoin(page.url,link.get('href','')) if link else page.url
+                link=article.select_one('a[href*="/posts/"], a[href*="/post-"]')
+                post_id=(article.get('id') or '').removeprefix('js-post-').removeprefix('post-')
+                link_url=urljoin(page.url,link.get('href','')) if link else (urljoin(page.url,'/posts/'+post_id+'/') if post_id.isdigit() else url.rstrip('/')+'/latest')
                 if ts>0 and content and link_url.startswith('https://keskustelu.jatkoaika.com/'):
                     results.append(dict(topic=title,content=content,timestamp=ts,url=link_url))
         except Exception as exc:
