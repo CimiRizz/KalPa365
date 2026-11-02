@@ -35,6 +35,17 @@ function renderForum(items){
   if(!items.length){target.innerHTML='<div class="empty">Keskusteluja ei ole tuotu. Lataa Jatkoajan KalPa-alueelta <strong>index.rss</strong> ja valitse se yllä olevasta painikkeesta.</div>';return;}
   target.innerHTML=items.slice(0,3).map(m=>`<article class="item"><span class="source">Jatkoajan KalPa-keskustelu · tuotu RSS-tiedostosta</span><h2><a href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(m.topic)}</a></h2><p>Ketjun viimeisin päivitys RSS-syötteen mukaan (ei välttämättä viimeisin yksittäinen viesti).</p><div class="bottom"><span>${escapeHtml(date(m.timestamp))}</span><a href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer">Avaa keskustelu ↗</a></div></article>`).join('');
 }
+async function loadAutomaticForum(){
+ try {
+  const response=await fetch('/api/forum-posts',{cache:'no-store'});
+  if(!response.ok)return;
+  const info=await response.json();
+  if(!Array.isArray(info.messages)||!info.messages.length)return;
+  const items=info.messages.slice(0,3);
+  $('forumGrid').innerHTML=items.map(m=>`<article class="item"><span class="source">Jatkoajan epävirallinen KalPa-keskustelu · automaattisesti päivitetty</span><h2><a target="_blank" rel="noopener noreferrer" href="${escapeHtml(m.url)}">${escapeHtml(m.topic)}</a></h2><p style="white-space:pre-line;overflow-wrap:anywhere">${escapeHtml(m.content)}</p><div class="bottom"><span>${escapeHtml(date(m.timestamp))}</span><a href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer">Avaa viesti ↗</a></div></article>`).join('');
+  $('forumImportStatus').textContent='3 uusinta saatavilla olevaa yksittäistä viestiä · automaattinen päivitys '+new Date(info.updated_at*1000).toLocaleString('fi-FI')+' · RSS-tuonti edelleen käytettävissä';
+ }catch(e){console.warn('Viestien automaattinen päivitys ei onnistunut',e);}
+}
 function loadForum(){
  try{
   const saved=JSON.parse(localStorage.getItem(FORUM_STORAGE_KEY)||'null');
@@ -76,7 +87,7 @@ async function importForumFile(file){
 }
 $('forumRssFile').addEventListener('change',e=>importForumFile(e.target.files?.[0]));
 async function load(){const btn=$('refresh');btn.disabled=true;$('status').textContent='Haetaan KalPa-uutisia…';try{const r=await fetch('/api/news',{cache:'no-store'});if(!r.ok)throw Error('Palvelinvirhe '+r.status);const data=await r.json();articles=(data.articles||[]).sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0));lastUpdate=new Date(data.updated).toLocaleTimeString('fi-FI',{hour:'2-digit',minute:'2-digit'});const prev=$('source').value;const counts={};for(const a of articles)counts[a.source]=(counts[a.source]||0)+1;const sources=[...new Set([...Object.keys(data.sources||{}),...articles.map(a=>a.source)])].sort((a,b)=>a.localeCompare(b,'fi'));$('source').innerHTML='<option value="">Kaikki uutislähteet</option>'+sources.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)} (${counts[s]||0})</option>`).join('');if(sources.includes(prev))$('source').value=prev;render();if(data.errors?.length){$('status').textContent+=' · Osa lähteistä ei vastannut'}if(data.status==='error')$('status').textContent='Uutisten haku epäonnistui. Yritä myöhemmin uudelleen.'}catch(e){$('status').textContent='Uutisten lataaminen epäonnistui: '+e.message}finally{btn.disabled=false}}
-$('latestGrid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('grid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('search').addEventListener('input',render);$('source').addEventListener('change',render);$('refresh').addEventListener('click',load);load();loadForum();setInterval(load,300000);
+$('latestGrid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('grid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('search').addEventListener('input',render);$('source').addEventListener('change',render);$('refresh').addEventListener('click',load);load();loadForum();loadAutomaticForum();setInterval(load,300000);setInterval(loadAutomaticForum,300000);
 
 // Joukkueiden logot ovat paikallisia tiedostoja: ei ulkoisia kuvapalveluita.
 const TEAM_LOGOS={

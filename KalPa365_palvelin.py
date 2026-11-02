@@ -1555,7 +1555,44 @@ def forum_messages():
         FORUM_CACHE.update(at=time.time(),data=data)
     return data
 
+# Paikallisen kerääjän tuottamat yksittäiset viestit (ei RSS-ketjuja).
+# Renderin muisti ei ole pysyvä; kerääjä lähettää tiedot jokaisella ajokerralla.
+import os
+LATEST_FORUM_POSTS = {'updated_at': None, 'messages': []}
+LATEST_FORUM_LOCK = threading.Lock()
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if urlparse(self.path).path != '/api/forum-posts':
+            self.send_error(404); return
+        import hmac
+        token = os.environ.get('KALPA_FORUM_TOKEN', '')
+        supplied = self.headers.get('X-Kalpa-Token', '')
+        if not token or not hmac.compare_digest(token, supplied):
+            self.send_error(403); return
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length < 2 or length > 65536: raise ValueError('Väärä koko')
+            raw = json.loads(self.rfile.read(length))
+            items = raw.get('messages', [])
+            if not isinstance(items, list) or len(items)>3: raise ValueError('Liikaa viestejä')
+            clean=[]
+            for m in items:
+                url=str(m.get('url',''))
+                if not re.match(r'^https://keskustelu\.jatkoaika\.com/(?:threads|posts)/',url):
+                    raise ValueError('Virheellinen URL')
+                clean.append({'topic':str(m.get('topic',''))[:250],
+                              'content':str(m.get('content',''))[:3000],
+                              'timestamp':int(m.get('timestamp',0)), 'url':url})
+            clean.sort(key=lambda a:a['timestamp'],reverse=True)
+            with LATEST_FORUM_LOCK:
+                LATEST_FORUM_POSTS.update(updated_at=time.time(),messages=clean)
+            response=b'{"ok":true}'
+            self.send_response(200); self.send_header('Content-Type','application/json');
+            self.send_header('Content-Length',str(len(response))); self.end_headers(); self.wfile.write(response)
+        except (ValueError,TypeError,KeyError,OverflowError, json.JSONDecodeError) as exc:
+            self.send_error(400,str(exc))
+
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
             self.send_response(200); self.send_header('Content-Length','0'); self.end_headers()
@@ -1565,6 +1602,10 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
+        elif path == '/api/forum-posts':
+            with LATEST_FORUM_LOCK:
+                payload=json.dumps(LATEST_FORUM_POSTS,ensure_ascii=False).encode('utf-8')
+            mime='application/json; charset=utf-8'
         elif path == '/api/forum':
             payload=json.dumps(forum_messages(),ensure_ascii=False).encode('utf-8')
             mime='application/json; charset=utf-8'
