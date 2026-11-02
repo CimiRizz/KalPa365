@@ -1560,6 +1560,40 @@ def forum_messages():
 import os
 LATEST_FORUM_POSTS = {'updated_at': None, 'messages': []}
 LATEST_FORUM_LOCK = threading.Lock()
+# PostgreSQL-backed storage; Render's ephemeral filesystem and process memory are not durable.
+# Use DATABASE_URL from a Render Postgres instance. The table is initialized automatically.
+FORUM_DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+
+def forum_db_connection():
+    import psycopg
+    return psycopg.connect(FORUM_DATABASE_URL, connect_timeout=8)
+
+def forum_db_init(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS kalpa_forum_latest (
+        id smallint PRIMARY KEY CHECK (id = 1),
+        updated_at double precision NOT NULL,
+        messages jsonb NOT NULL
+    )""")
+
+def forum_store(payload):
+    if not FORUM_DATABASE_URL:
+        raise RuntimeError('DATABASE_URL puuttuu: pysyva tallennus ei ole kaytossa')
+    with forum_db_connection() as conn:
+        forum_db_init(conn)
+        conn.execute("""INSERT INTO kalpa_forum_latest(id, updated_at, messages)
+            VALUES (1, %s, %s::jsonb)
+            ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,
+            messages=excluded.messages""", (payload['updated_at'], json.dumps(payload['messages'],ensure_ascii=False)))
+
+def forum_load():
+    if not FORUM_DATABASE_URL:
+        return {'updated_at': None, 'messages': [], 'storage_status': 'database_not_configured'}
+    with forum_db_connection() as conn:
+        forum_db_init(conn)
+        row = conn.execute('SELECT updated_at, messages FROM kalpa_forum_latest WHERE id=1').fetchone()
+    if row is None:
+        return {'updated_at': None, 'messages': [], 'storage_status': 'empty'}
+    return {'updated_at': row[0], 'messages': row[1], 'storage_status': 'persistent'}
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -1585,13 +1619,16 @@ class Handler(BaseHTTPRequestHandler):
                               'content':str(m.get('content',''))[:3000],
                               'timestamp':int(m.get('timestamp',0)), 'url':url})
             clean.sort(key=lambda a:a['timestamp'],reverse=True)
-            with LATEST_FORUM_LOCK:
-                LATEST_FORUM_POSTS.update(updated_at=time.time(),messages=clean)
+            # Do not confirm a successful upload unless the database transaction committed.
+            forum_store({'updated_at': time.time(), 'messages': clean})
             response=b'{"ok":true}'
             self.send_response(200); self.send_header('Content-Type','application/json');
             self.send_header('Content-Length',str(len(response))); self.end_headers(); self.wfile.write(response)
         except (ValueError,TypeError,KeyError,OverflowError, json.JSONDecodeError) as exc:
             self.send_error(400,str(exc))
+        except Exception as exc:
+            print('Forum PostgreSQL storage error:', type(exc).__name__, str(exc)[:180], flush=True)
+            self.send_error(503, 'Forum database unavailable; check DATABASE_URL and Render logs')
 
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -1603,8 +1640,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
         elif path == '/api/forum-posts':
-            with LATEST_FORUM_LOCK:
-                payload=json.dumps(LATEST_FORUM_POSTS,ensure_ascii=False).encode('utf-8')
+            try:
+                payload=json.dumps(forum_load(),ensure_ascii=False).encode('utf-8')
+            except Exception as exc:
+                print('Forum PostgreSQL read error:', type(exc).__name__, str(exc)[:180], flush=True)
+                self.send_error(503, 'Forum database unavailable; check DATABASE_URL and Render logs')
+                return
             mime='application/json; charset=utf-8'
         elif path == '/api/forum':
             payload=json.dumps(forum_messages(),ensure_ascii=False).encode('utf-8')
