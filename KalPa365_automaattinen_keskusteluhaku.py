@@ -1,4 +1,4 @@
-"""KalPa365 v6.13: paikallinen Jatkoajan uusimpien vastausten kerääjä.
+"""KalPa365 v6.15: paikallinen Jatkoajan uusimpien vastausten kerääjä.
 Asenna: pip install playwright beautifulsoup4 && python -m playwright install chromium
 Aseta KALPA365_URL ja KALPA_FORUM_TOKEN ympäristömuuttujat, käynnistä skripti.
 """
@@ -15,6 +15,34 @@ TOKEN=os.environ.get('KALPA_FORUM_TOKEN','')
 INTERVAL=max(120,int(os.environ.get('KALPA_INTERVAL_SECONDS','300')))
 if not BASE.startswith('https://') or not TOKEN:
     raise SystemExit('Aseta KALPA365_URL (https://...) ja KALPA_FORUM_TOKEN.')
+
+def parse_message_time(article):
+    """Prefer a complete machine-readable date; never int('08.45')."""
+    for tag in article.select('time'):
+        for attr in ('data-time', 'data-timestamp', 'datetime', 'title'):
+            raw = (tag.get(attr) or '').strip()
+            if not raw:
+                continue
+            if re.fullmatch(r'\d{10}(?:\.\d+)?', raw):
+                return int(float(raw))
+            if re.fullmatch(r'\d{13}', raw):
+                return int(raw) // 1000
+            # XenForo's visible local times, e.g. 08.45, are NOT Unix seconds.
+            try:
+                dt = datetime.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=datetime.datetime.now().astimezone().tzinfo)
+                if dt.year >= 2020:
+                    return int(dt.timestamp())
+            except ValueError:
+                pass
+            try:
+                dt = parsedate_to_datetime(raw)
+                if dt.year >= 2020:
+                    return int(dt.timestamp())
+            except (ValueError, TypeError, IndexError):
+                pass
+    return 0
 
 def get_posts(page):
     response=page.goto(FEED,wait_until='domcontentloaded',timeout=30000)
@@ -37,8 +65,7 @@ def get_posts(page):
                 if not body: continue
                 for quote in body.select('blockquote, .bbCodeBlock, .js-expandWatch'):quote.decompose()
                 content=body.get_text(' ',strip=True)[:3000]
-                time_tag=article.select_one('time[data-time]')
-                ts=int(time_tag.get('data-time','0')) if time_tag else 0
+                ts=parse_message_time(article)
                 link=article.select_one('a[href*="/posts/"], a[href*="/post-"]')
                 post_id=(article.get('id') or '').removeprefix('js-post-').removeprefix('post-')
                 link_url=urljoin(page.url,link.get('href','')) if link else (urljoin(page.url,'/posts/'+post_id+'/') if post_id.isdigit() else url.rstrip('/')+'/latest')
@@ -46,6 +73,8 @@ def get_posts(page):
                     results.append(dict(topic=title,content=content,timestamp=ts,url=link_url))
         except Exception as exc:
             print('Ketju ei auennut:',url,str(exc)[:150],flush=True)
+    if not results:
+        print('Viestejä ei löytynyt kelvollisilla päiväyksillä: tarkista keskustelusivun aika-attribuutit.',flush=True)
     # Duplicate post IDs should never be shown twice.
     unique={r['url']:r for r in results}
     return sorted(unique.values(),key=lambda r:r['timestamp'],reverse=True)[:3]

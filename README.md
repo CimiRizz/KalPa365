@@ -1,16 +1,17 @@
-# KalPa365 v6.14 – keskusteluviestien näyttö
+# KalPa365 v6.15 – keskusteluviestien ajan käsittelyn korjaus
 
-- RSS-tuontipainike ja siihen liittyvä ohjeteksti poistettu.
-- Keskustelulinkki ohjaa uusimpaan viestiin (ketjun `/latest`-reitti), tai yksittäisen viestin pysyvään osoitteeseen jos hakija löytää sen.
-- Kolmen uusimman löydetyn yksittäisen viestin sisältö näytetään, jos Windows-hakija on toiminnassa ja on lähettänyt viestit Renderiin.
-- Jos viestien sisältöä ei ole saatavilla, näytetään rehellinen ilmoitus, ei pelkkiä RSS-otsikoita.
+Korjattu Windows-hakijan kaatuminen, kun Jatkoajan aikaleima on esimerkiksi `08.45` eikä Unix-aikaleima. Uusi hakija hyväksyy Unix-aikaleimat sekä kokonaiset ISO-/RFC-päiväykset ja ohittaa epäselvät kellonajat. Näin viesteille ei arvata virheellistä päivämäärää.
 
-## Käyttöönotto
-1. Korvaa GitHubissa `index.html` ja `KalPa365_palvelin.py`; Render julkaisee muutoksen.
-2. Render Environment: aseta `KALPA_FORUM_TOKEN` pitkäksi satunnaiseksi salaisuudeksi.
-3. Windows: `pip install playwright beautifulsoup4` ja `python -m playwright install chromium`.
-4. Aseta `KALPA365_URL` Render-sivuston osoitteeksi ja `KALPA_FORUM_TOKEN` samaksi kuin Renderissä.
-5. Käynnistä `ALOITA_AUTOMAATTINEN_HAKU.bat` samasta kansiosta.
-6. Tarkista `https://OMA-RENDER/api/forum-posts`: jos `messages` on tyhjä, paikallinen hakija ei ole vielä onnistunut.
+**Nopein päivitys:** Korvaa vain Windows-koneen `C:\Users\kimir\Desktop\GIT\KalPa365_automaattinen_keskusteluhaku.py` tällä versiolla. GitHubia tai Renderiä ei tarvitse päivittää tämän korjauksen vuoksi. Sulje vanha hakija ensin Ctrl+C:llä.
 
-Huom: Hakija on kokeellinen; pääsy Jatkoajan sivuille riippuu sen asettamista rajoituksista. Renderin muisti tyhjenee palvelun uudelleenkäynnistyessä, jolloin viestit odottavat seuraavaa lähetystä. Käyttäjän Windows-koneen on oltava päällä automaattista hakua varten.
+PowerShellissä (uusi ikkuna):
+```powershell
+cd 'C:\Users\kimir\Desktop\GIT'
+$env:KALPA365_URL='https://kalpa365.onrender.com'
+$env:KALPA_FORUM_TOKEN='UUSI_RENDERISSA_MÄÄRITETTY_SALAINEN_TUNNISTE'
+py -u .\KalPa365_automaattinen_keskusteluhaku.py
+```
+
+Koska aiempi tunniste näkyi keskustelussa, vaihda se **sekä Renderissä että Windowsissa** uuteen satunnaiseen arvoon. Älä lähetä tunnistetta keskusteluun.
+
+Huom: Viestien haku onnistuu vain, jos Jatkoaika näyttää koneella luettavissa olevat keskustelusivut ja päiväykset. Kolme uusinta viestiä tarkoittaa hakijan tarkistamista ketjuista löydettyjä kolmea uusinta päivättyä viestiä.
