@@ -1,0 +1,30 @@
+name: Jatkoaika yhteystesti
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Testaa Jatkoajan julkiset osoitteet
+        shell: bash
+        run: |
+          python - <<'PY'
+          import urllib.request, urllib.error
+          urls = [
+              'https://keskustelu.jatkoaika.com/forums/kalpa.161/index.rss',
+              'https://keskustelu.jatkoaika.com/forums/kalpa.161/',
+          ]
+          for url in urls:
+              req=urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0 KalPa365 connectivity test','Accept':'application/rss+xml, text/html;q=0.9,*/*;q=0.8'})
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as res:
+                      content=res.read(500)
+                      print('URL:',url,'STATUS:',res.status,'CONTENT-TYPE:',res.headers.get('Content-Type'),'FIRST-BYTES:',len(content))
+              except urllib.error.HTTPError as err:
+                  print('URL:',url,'HTTP_ERROR:',err.code)
+              except Exception as err:
+                  print('URL:',url,'ERROR:',type(err).__name__,str(err))
+          PY
