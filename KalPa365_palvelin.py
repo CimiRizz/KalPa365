@@ -1485,81 +1485,64 @@ FORUM_LOCK = threading.Lock()
 FORUM_CACHE = {'at': 0, 'data': None}
 
 def fetch_kalpa_forum():
-    """Three most recent *messages*, extracted from latest thread posts.
+    """Read publisher's public RSS for the 3 most recently active KalPa THREADS.
 
-    The forum may refuse requests; never circumvent CAPTCHA or HTTP 403.
-    Distinguish actual post excerpts from topic titles.
+    RSS content:encoded contains the ORIGINAL post, not the last reply. Deliberately
+    don't publish it as the most recent message. 403 is treated as a block.
     """
-    from bs4 import BeautifulSoup
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
     from urllib.error import HTTPError
-    result = {'status': 'empty', 'messages': [], 'source': FORUM_URL}
-    headers = {'User-Agent': 'KalPa365/6.10 (+public KalPa conversation links)',
-               'Accept': 'text/html,application/xhtml+xml'}
-    def get(url):
-        req = Request(url, headers=headers)
-        with urlopen(req, timeout=9) as resp:
-            final = resp.geturl()
-            if urlparse(final).hostname != 'keskustelu.jatkoaika.com':
-                raise ValueError('Unexpected forum redirect')
-            if resp.status != 200: raise ValueError('HTTP ' + str(resp.status))
-            data = resp.read(900_000)
-            return BeautifulSoup(data, 'html.parser')
+    from datetime import timezone
+
+    rss_url = FORUM_URL.rstrip('/') + '/index.rss'
+    result = {'status': 'empty', 'messages': [], 'source': rss_url,
+              'mode': 'rss_threads', 'kind': 'recently_updated_threads'}
     try:
-        page = get(FORUM_URL)
-        if 'captcha' in page.get_text(' ', strip=True)[:400].lower():
-            return dict(result, status='blocked', message='Forum asks for verification')
-        threads=[]
-        for row in page.select('.structItem--thread'):
-            link = row.select_one('.structItem-title a[href*="/threads/"]')
-            if not link: continue
-            title = link.get_text(' ', strip=True)
-            latest = row.select_one('.structItem-cell--latest a[href*="/posts/"]')
-            if not latest:
-                latest = row.select_one('.structItem-cell--latest a[href*="/threads/"]')
-            stamp_tag = row.select_one('.structItem-cell--latest time[data-time]')
-            author = row.select_one('.structItem-cell--latest .username')
-            ts = int(stamp_tag.get('data-time',0)) if stamp_tag else 0
-            target = urljoin(FORUM_URL,latest['href']) if latest and latest.get('href') else urljoin(FORUM_URL,link['href'])
-            if urlparse(target).hostname != 'keskustelu.jatkoaika.com': continue
-            threads.append((ts,title,author.get_text(' ',strip=True) if author else '',target))
-        threads.sort(key=lambda x:x[0],reverse=True)
-        result['thread_candidates'] = len(threads)
-        seen=set()
-        for ts,title,author,target in threads[:9]:
+        req = Request(rss_url, headers={
+            'User-Agent': 'KalPa365/6.11 (public RSS feed reader)',
+            'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9'
+        })
+        with urlopen(req, timeout=12) as response:
+            target = response.geturl()
+            if urlparse(target).hostname != 'keskustelu.jatkoaika.com':
+                raise ValueError('Unexpected forum RSS redirect')
+            if response.status != 200:
+                raise ValueError('RSS returned HTTP '+str(response.status))
+            payload = response.read(550_000)
+        root = ET.fromstring(payload)
+        entries = root.findall('./channel/item')
+        result['items_scanned'] = len(entries)
+        seen = set()
+        for item in entries:
+            title = (item.findtext('title') or '').strip()
+            link = (item.findtext('link') or '').strip()
+            if not title or not link or urlparse(link).hostname != 'keskustelu.jatkoaika.com':
+                continue
+            if '/threads/' not in urlparse(link).path or link in seen:
+                continue
+            seen.add(link)
             try:
-                thread=get(target)
-                posts=thread.select('article.message')
-                if not posts: continue
-                post = posts[-1]
-                content = post.select_one('.message-body .bbWrapper') or post.select_one('.message-body')
-                if not content: continue
-                for node in content.select('blockquote, .bbCodeBlock, .message-expandWrapper, script, style'):
-                    node.decompose()
-                body = ' '.join(content.stripped_strings)
-                body = re.sub(r'\s+',' ',body).strip()
-                if not body: continue
-                post_id=post.get('id','')
-                msg_url=urljoin(target,'#'+post_id) if post_id else target
-                if msg_url in seen: continue
-                seen.add(msg_url)
-                post_time=post.select_one('time[data-time]')
-                if post_time:
-                    try: ts=int(post_time['data-time'])
-                    except (ValueError,TypeError): pass
-                post_author=post.select_one('.message-name .username') or post.select_one('a.username')
-                result['messages'].append({'topic':title,'author':post_author.get_text(' ',strip=True) if post_author else author,
-                    'excerpt':body[:450], 'url':msg_url, 'timestamp':ts})
-                if len(result['messages'])>=3: break
-            except (HTTPError, OSError, ValueError, TimeoutError): continue
-        result['messages'].sort(key=lambda m:m['timestamp'],reverse=True)
-        result['status']='ok' if result['messages'] else 'empty'
+                dt = parsedate_to_datetime(item.findtext('pubDate') or '')
+                if not dt.tzinfo: dt = dt.replace(tzinfo=timezone.utc)
+                stamp = int(dt.timestamp())
+            except (TypeError, ValueError, OverflowError):
+                continue
+            creator = item.findtext('{http://purl.org/dc/elements/1.1/}creator') or ''
+            result['messages'].append({
+                'topic': title, 'author': '', 'excerpt': '', 'url': link,
+                'timestamp': stamp, 'kind': 'thread', 'creator_of_original_post': creator
+            })
+        result['messages'].sort(key=lambda m: m['timestamp'],reverse=True)
+        result['messages'] = result['messages'][:3]
+        result['status'] = 'ok' if result['messages'] else 'empty'
         if not result['messages']:
-            result['message']='No readable recent posts found in forum'
+            result['message'] = 'RSS returned no dated KalPa threads'
     except HTTPError as e:
-        result.update(status='blocked' if e.code in (401,403,429) else 'error', http_status=e.code,
-                      message='Forum HTTP '+str(e.code))
-    except (OSError, ValueError, TimeoutError) as e:
-        result.update(status='error',message=str(e)[:180])
+        result.update(status='blocked' if e.code in (401,403,429) else 'error',
+                      http_status=e.code, message='Forum RSS HTTP '+str(e.code))
+    except (ET.ParseError, OSError, ValueError, TimeoutError) as e:
+        result.update(status='error',message=f'{type(e).__name__}: {str(e)[:160]}')
     return result
 
 def forum_messages():
