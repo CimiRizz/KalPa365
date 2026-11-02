@@ -51,6 +51,7 @@ ALLOWED_PUBLISHERS = (
     'kalpa.fi',
     'suomikiekko.com',
     'kiekkouutiset.fi',
+    'jatkoaika.com',
 )
 
 def allowed_publisher(url):
@@ -82,7 +83,7 @@ def history_merge(fresh):
                 db.execute('INSERT INTO articles(url,payload,timestamp,seen) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload, timestamp=excluded.timestamp, seen=excluded.seen', (a['url'], json.dumps(a, ensure_ascii=False), a['timestamp'], now))
             db.execute('DELETE FROM articles WHERE seen < ?', (now - HISTORY_DAYS * 86400,))
             # Retire removed publishers from stored history too.
-            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('IS', 'IL', 'Jatkoaika', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
+            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('IS', 'IL', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
             rows = db.execute('SELECT payload FROM articles ORDER BY timestamp DESC LIMIT 500').fetchall()
         return [json.loads(row[0]) for row in rows], 'ok'
     except (OSError, sqlite3.Error) as exc:
@@ -1097,6 +1098,87 @@ def resolve_mtv_headline(item):
     return item
 
 
+# v6.9: experimental independent browser reader. A real Chromium installation is
+# required in Render. We do not solve CAPTCHAs, rotate IPs, or ignore 403s.
+JATKOAIKA_BROWSER_ENABLED = os.getenv('JATKOAIKA_BROWSER', '1').strip().lower() in ('1', 'yes', 'true')
+JATKOAIKA_TEAM_URL = 'https://www.jatkoaika.com/Joukkue/KalPa'
+
+def fetch_jatkoaika_browser():
+    info = {'status': 'disabled', 'count': 0, 'scanned': 0,
+            'page': JATKOAIKA_TEAM_URL, 'mode': 'playwright_chromium'}
+    if not JATKOAIKA_BROWSER_ENABLED:
+        return [], info
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        info.update(status='dependency_missing', message='Install playwright and Chromium as in README')
+        return [], info
+    results = []
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True, args=['--no-sandbox'])
+            try:
+                page = browser.new_page(locale='fi-FI', user_agent=(
+                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+                    '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'))
+                response = page.goto(JATKOAIKA_TEAM_URL, wait_until='domcontentloaded', timeout=15000)
+                code = response.status if response else None
+                info['http_status'] = code
+                if code in (401, 403, 429):
+                    info.update(status='blocked', message=f'Publisher HTTP {code}; no bypass attempted')
+                    return [], info
+                if code != 200:
+                    info.update(status='error', message=f'Unexpected HTTP {code}')
+                    return [], info
+                markup = page.content()
+                if re.search(r'captcha|verify you are human|cloudflare challenge', markup[:15000], re.I):
+                    info.update(status='blocked', message='Human verification detected; no bypass attempted')
+                    return [], info
+                parser = DirectLinkParser('Jatkoaika', JATKOAIKA_TEAM_URL)
+                parser.feed(markup)
+                info['scanned'] = len(parser.links)
+                links = list(dict((url, title) for title, url in parser.links).items())
+                info['article_links'] = len(links)
+                # Only inspect a small number; do not crawl aggressively.
+                for link, title in links[:12]:
+                    try:
+                        if not POSITIVE.search(title + ' ' + unquote(urlparse(link).path)):
+                            continue
+                        resp = page.goto(link, wait_until='domcontentloaded', timeout=10000)
+                        if not resp or resp.status != 200:
+                            continue
+                        body = page.content()
+                        if PAYWALL_HINTS.search(body):
+                            continue
+                        stamp = publication_date_from_html(body, 'www.jatkoaika.com')
+                        if not stamp or not (time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400):
+                            continue
+                        reader = ReaderParser(); reader.feed(body)
+                        visible = list(dict.fromkeys(reader.paragraphs))
+                        structured = list(dict.fromkeys(jsonld_paragraphs(reader.json_scripts)))
+                        paragraphs = max((visible, structured), key=lambda parts:sum(map(len,parts)))
+                        if len(paragraphs) < 2 or sum(map(len,paragraphs)) < 450:
+                            continue
+                        title = strip_markup(title)
+                        item = {'title':title, 'source':'Jatkoaika', 'url':link,
+                                'summary':'', 'timestamp':stamp,
+                                'published':datetime.fromtimestamp(stamp,timezone.utc).isoformat()}
+                        results.append(item)
+                        # Same verified public browser response; subsequent urllib call
+                        # is not necessary and may be HTTP 403.
+                        with FREE_CACHE_LOCK:
+                            FREE_CACHE[link] = (time.time(), True)
+                    except Exception:
+                        continue
+                info.update(status='ok', count=len(results),
+                            sample_titles=[r['title'][:110] for r in results[:4]])
+            finally:
+                browser.close()
+    except Exception as exc:
+        info.update(status='error', message=f'{type(exc).__name__}: {str(exc)[:240]}')
+    return results, info
+
+
 def _timed_source(kind, source, targets=None):
     """Independent publisher fetch; failures do not cancel other publishers."""
     started = time.monotonic()
@@ -1107,6 +1189,8 @@ def _timed_source(kind, source, targets=None):
             articles, info = fetch_direct(source, targets)
         elif kind == 'mtv_sitemap':
             articles, info = fetch_mtv_sitemap()
+        elif kind == 'jatkoaika_browser':
+            articles, info = fetch_jatkoaika_browser()
         else:
             articles, info = fetch_liiga_news()
     except Exception as exc:
@@ -1123,6 +1207,7 @@ def _build_news():
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
             + [('liiga', 'Liiga.fi', None)]
+            + [('jatkoaika_browser', 'Jatkoaika', None)]
             )  # v6.1: MTV team page replaces low-yield sitemap scan
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.
@@ -1155,7 +1240,7 @@ def _build_news():
         resolved_by_url={a['url']:a for a in resolved}
         unique=[resolved_by_url.get(a['url'],a) for a in unique]
     historical,history_status=history_merge(unique)
-    historical=[a for a in historical if a.get('source') not in ('IS', 'IL', 'Jatkoaika', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
+    historical=[a for a in historical if a.get('source') not in ('IS', 'IL', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
     # A direct HTML index has no reliable publication timestamp (timestamp=0).
     # Never present such an article as current; publisher-search/RSS articles
     # with a real timestamp remain eligible. This also cleans persisted history.
