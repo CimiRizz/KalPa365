@@ -1,11 +1,12 @@
-KalPa365 v6.9.1 — Chromium-asennuksen korjaus
+KalPa365 v6.9.2 — Chromium mukana Render-julkaisussa
 
-Käyttäjän /api/sources osoitti: Playwright on asennettu, mutta Chromium-binääri puuttuu Renderistä. Jatkoajan verkkoyhteyttä ei vielä testattu.
+Edellisen raportin Jatkoaika-virhe: "Executable doesn't exist at /opt/render/.cache/ms-playwright/...". Vaikka build-vaiheessa näytettiin Chromium OK, selain saattoi päätyä rakennusvaiheen kotihakemiston välimuistiin, joka ei säily ajonaikaisessa palvelussa.
 
-GitHub: lisää/korvaa KalPa365_palvelin.py, requirements.txt ja render-build.sh.
-Render -> Settings -> Build Command: bash render-build.sh
-Render -> Manual Deploy -> Clear build cache & deploy (tai deploy ja tarkista loki).
+Tämä paketti käyttää PLAYWRIGHT_BROWSERS_PATH=0 sekä asennuksessa että palvelimessa. Chromium asennetaan Playwright-paketin sisälle, jolloin se kulkee palvelun julkaisuartifaktin mukana.
 
-Lokissa täytyy näkyä "Chromium OK:". Jos kirjastoihin liittyvä virhe estää käynnistyksen, Renderin palvelinympäristö voi vaatia erillisen järjestelmäriippuvuuksien asennuksen tai Docker-kuvan. Älä oleta että Jatkoaika toimii ennen /api/sources -testiä.
+1. GitHub: korvaa KalPa365_palvelin.py ja render-build.sh. Varmista että requirements.txt on mukana.
+2. Render Build Command: bash render-build.sh
+3. Render: Clear build cache & deploy. Varmista lokista "Chromium bundled OK:".
+4. Kun Render sanoo Live, avaa /api/sources ja tarkista Jatkoaika-status.
 
-Muut lähteet ja käyttöliittymä pysyvät v6.9 mukaisina. Ei CAPTCHA-kiertoa.
+Jatkoaika voi edelleen vastata 403, jolloin tämä asennuskorjaus ei poista julkaisijan estoa. Muut lähteet ja index.html säilyvät ennallaan. Ei CAPTCHA-kiertoa.

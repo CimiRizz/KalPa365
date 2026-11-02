@@ -1113,6 +1113,8 @@ def fetch_jatkoaika_browser():
     except ImportError:
         info.update(status='dependency_missing', message='Install playwright and Chromium as in README')
         return [], info
+    # Use bundled Chromium in the deployed Python environment, not build-cache HOME.
+    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
     results = []
     try:
         with sync_playwright() as pw:
