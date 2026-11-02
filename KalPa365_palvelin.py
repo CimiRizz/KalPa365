@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.7 — UrheiluSuomi removed; Jatkoaika publisher discovery improved."""
+"""KalPa365 v6.8 — only verified productive news sources enabled."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -25,36 +25,14 @@ STALE_MAX_AGE = 3600  # After one hour, require a fresh response instead of serv
 FREE_CACHE = {}
 FREE_CACHE_LOCK = threading.Lock()
 FEEDS = {
-    'IS': [
-        'https://www.is.fi/rss/tuoreimmat.xml',
-    ],
-    'IL': [
-        'https://www.iltalehti.fi/rss.xml',
-        'https://www.iltalehti.fi/rss/uutiset.xml',
-    ],
-    'Jatkoaika': ['https://www.jatkoaika.com/LIIGA/rss/index.rss'],
-    'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
-    # Uudet kokeelliset suorat julkaisijasyötteet. Vain KalPa-aiheiset
-    # otsikot/kuvaukset läpäisevät nykyisen suodatuksen.
-    'MTV Uutiset': [
-        # MTV publisher-owned RSS endpoint; replaces the obsolete /rss/uutiset.xml (404).
-        'https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat',
-    ],
-    'Keskisuomalainen': ['https://www.ksml.fi/feed/rss'],
-    'Etelä-Suomen Sanomat': ['https://www.ess.fi/feed/rss'],
-    'Karjalainen': ['https://www.karjalainen.fi/feed/rss'],
-    'Kaleva': ['https://www.kaleva.fi/feed/rss'],
-
-    # SuomiKiekko: publisher-owned RSS feeds; these are optional fallbacks.
+    'MTV Uutiset': ['https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat'],
     'SuomiKiekko': [
         'https://www.suomikiekko.com/feed/',
         'https://www.suomikiekko.com/?s=KalPa&feed=rss2',
     ],
     'Yle.fi': [
-        # Ylen viralliset RSS-syötteet. Vain KalPaa käsittelevät jutut
-        # pääsevät läpi parse_feed()-funktion KalPa-aiherajauksesta.
         'https://yle.fi/rss/urheilu',
-        'https://yle.fi/rss/t/18-141764/fi',  # Pohjois-Savo
+        'https://yle.fi/rss/t/18-141764/fi',
         'https://yle.fi/rss/uutiset/tuoreimmat',
         'https://yle.fi/rss/tuoreimmat',
     ],
@@ -67,17 +45,9 @@ POSITIVE = re.compile(r'(?<!\w)kalpa(?:n|lle|lta|ssa|sta|an|a)?(?!\w)|kuopion\s+
 NEGATIVE = re.compile(r'kalpa(?:na|lla)?\s+(?:ruoka|esine|kukka)|kalpa\s+miekk', re.I)
 
 ALLOWED_PUBLISHERS = (
-    'is.fi',
-    'iltalehti.fi',
-    'jatkoaika.com',
-    'savonsanomat.fi',
     'liiga.fi',
     'yle.fi',
     'mtvuutiset.fi',
-    'ksml.fi',
-    'ess.fi',
-    'karjalainen.fi',
-    'kaleva.fi',
     'kalpa.fi',
     'suomikiekko.com',
     'kiekkouutiset.fi',
@@ -112,7 +82,7 @@ def history_merge(fresh):
                 db.execute('INSERT INTO articles(url,payload,timestamp,seen) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload, timestamp=excluded.timestamp, seen=excluded.seen', (a['url'], json.dumps(a, ensure_ascii=False), a['timestamp'], now))
             db.execute('DELETE FROM articles WHERE seen < ?', (now - HISTORY_DAYS * 86400,))
             # Retire removed publishers from stored history too.
-            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
+            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('IS', 'IL', 'Jatkoaika', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
             rows = db.execute('SELECT payload FROM articles ORDER BY timestamp DESC LIMIT 500').fetchall()
         return [json.loads(row[0]) for row in rows], 'ok'
     except (OSError, sqlite3.Error) as exc:
@@ -259,21 +229,14 @@ def fetch_liiga():
 # Direct publisher category/team pages. Only public links present in HTML are used.
 # A 403 response is recorded and never bypassed.
 DIRECT_PAGES = {
-    'Jatkoaika': [
-        'https://www.jatkoaika.com/Joukkue/KalPa',
-        'https://www.jatkoaika.com/haku?team%5B%5D=31437',
-        'https://www.jatkoaika.com/haku?keys=KalPa',
-    ],
     'KalPa.fi': ['https://kalpa.fi/'],
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
-    # Publisher's own sports index; only real article permalinks are considered.
     'MTV Uutiset': [
         'https://www.mtvuutiset.fi/tuoreimmat/urheilu',
         'https://www.mtvuutiset.fi/liiga',
-        'https://www.mtvuutiset.fi/liiga/kalpa',  # MTV publisher's own KalPa news page
+        'https://www.mtvuutiset.fi/liiga/kalpa',
     ],
-
 }
 
 class DirectLinkParser(HTMLParser):
@@ -1192,7 +1155,7 @@ def _build_news():
         resolved_by_url={a['url']:a for a in resolved}
         unique=[resolved_by_url.get(a['url'],a) for a in unique]
     historical,history_status=history_merge(unique)
-    historical=[a for a in historical if a.get('source') not in ('Kiekkoareena', 'Pallomeri.net', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
+    historical=[a for a in historical if a.get('source') not in ('IS', 'IL', 'Jatkoaika', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
     # A direct HTML index has no reliable publication timestamp (timestamp=0).
     # Never present such an article as current; publisher-search/RSS articles
     # with a real timestamp remain eligible. This also cleans persisted history.

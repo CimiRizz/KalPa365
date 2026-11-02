@@ -1,10 +1,10 @@
-# KalPa365 v6.7 — Jatkoaika ja UrheiluSuomi
+KalPa365 v6.8 – vain tuloksia tuottavat uutislähteet
 
-Korvaa GitHubissa vain `KalPa365_palvelin.py`. `index.html` pidetään ennallaan.
+Poistettu: IS, IL, Jatkoaika, Savon Sanomat, Keskisuomalainen, Etelä-Suomen Sanomat, Karjalainen, Kaleva.
+Aiemmin poistetut: Pallomeri.net, Kiekkoareena, UrheiluSuomi.
 
-- UrheiluSuomi poistettu lähteistä, tarkistuksista ja historiasta.
-- Jatkoaika: vanha, 403-virheen palauttanut RSS-osoite korvattu Liigan RSS-ehdokkaalla ja virallisiin julkisiin joukkue-/hakusivuihin lisätty hakupolut.
-- Jos Jatkoaika estää Render-palvelimen pyynnöt edelleen (HTTP 403), uutisia ei pystytä hakemaan ja tilanne näkyy `/api/sources`-diagnostiikassa.
-- Muut lähteet, MTV, KalPa365 v6.2:n käyttöliittymä, maksuttomuus- ja 30 päivän rajaukset sekä Google Newsin poisto säilyvät.
+Säilytetty: MTV Uutiset, SuomiKiekko, Yle.fi, KalPa.fi, Kiekkouutiset, Liiga.fi.
 
-Huom: Jatkoajan uusien hakureittien toimivuutta Renderistä ei ole voitu testata.
+Lähteet valittu viimeisimmän toimitetun /api/sources-raportin perusteella. Nollatulokset eivät tarkoita, ettei julkaisijalla olisi uutisia muulloin.
+
+Asennus: korvaa GitHubissa vain KalPa365_palvelin.py. Käyttöliittymä index.html säilyy v6.2:n mukaisena.
