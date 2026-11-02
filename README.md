@@ -1,20 +1,10 @@
-KalPa365 v6.5 — Pallomeri-hakukorjaus
+# KalPa365 v6.7 — Jatkoaika ja UrheiluSuomi
 
-Asennus: korvaa GitHubissa VAIN KalPa365_palvelin.py. Säilytä nykyinen index.html.
+Korvaa GitHubissa vain `KalPa365_palvelin.py`. `index.html` pidetään ennallaan.
 
-Lähettämäsi /api/sources osoitti, että Pallomeren RSS-osoitteet palauttivat
-virheellistä XML:ää eikä Pallomeren suorilta sivuilta löydetty artikkeleita.
+- UrheiluSuomi poistettu lähteistä, tarkistuksista ja historiasta.
+- Jatkoaika: vanha, 403-virheen palauttanut RSS-osoite korvattu Liigan RSS-ehdokkaalla ja virallisiin julkisiin joukkue-/hakusivuihin lisätty hakupolut.
+- Jos Jatkoaika estää Render-palvelimen pyynnöt edelleen (HTTP 403), uutisia ei pystytä hakemaan ja tilanne näkyy `/api/sources`-diagnostiikassa.
+- Muut lähteet, MTV, KalPa365 v6.2:n käyttöliittymä, maksuttomuus- ja 30 päivän rajaukset sekä Google Newsin poisto säilyvät.
 
-Uutta:
-- Pallomeren julkaisijan oma WordPress-hakurajapinta kahdella osoitevaihtoehdolla
-- Muutama julkaisijan oman sivuston tunnettu uutisosoite varmistuskeinona
-  (eivät saa automaattista julkaisupäivää eivätkä ohita maksuttomuustarkistusta)
-- /api/sources -> Pallomeri.net -> publisher_search näyttää onnistumiset,
-  virheet, ehdokkaat ja artikkeleiden hylkäyssyyt.
-- Kaikille Pallomeren uutisille edelleen 30 vrk, oikea päiväys, tekstin
-  luettavuus ja KalPa-aiheisuus.
-- Ei Google Newsia. Muiden lähteiden käsittelyyn ei tehty muutoksia.
-
-Huom. Suoraa Render-testiyhteyttä tai live-verkkoyhteyttä ei käytetty tämän
-ZIP-version validointiin. Jos Pallomeri edelleen 0, lähetä /api/sources-palvelun
-Pallomeri.net-osio, erityisesti publisher_search.
+Huom: Jatkoajan uusien hakureittien toimivuutta Renderistä ei ole voitu testata.

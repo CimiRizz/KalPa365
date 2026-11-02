@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.5 — Pallomeri publisher-native discovery fallback."""
+"""KalPa365 v6.7 — UrheiluSuomi removed; Jatkoaika publisher discovery improved."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -32,17 +32,13 @@ FEEDS = {
         'https://www.iltalehti.fi/rss.xml',
         'https://www.iltalehti.fi/rss/uutiset.xml',
     ],
-    'Jatkoaika': ['https://www.jatkoaika.com/rss.xml'],
+    'Jatkoaika': ['https://www.jatkoaika.com/LIIGA/rss/index.rss'],
     'Savon Sanomat': ['https://www.savonsanomat.fi/feed/rss'],
     # Uudet kokeelliset suorat julkaisijasyötteet. Vain KalPa-aiheiset
     # otsikot/kuvaukset läpäisevät nykyisen suodatuksen.
     'MTV Uutiset': [
         # MTV publisher-owned RSS endpoint; replaces the obsolete /rss/uutiset.xml (404).
         'https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat',
-    ],
-    'Pallomeri.net': [
-        'https://pallomeri.net/?s=KalPa&feed=rss2',
-        'https://pallomeri.net/jaakiekko/liiga/feed/',
     ],
     'Keskisuomalainen': ['https://www.ksml.fi/feed/rss'],
     'Etelä-Suomen Sanomat': ['https://www.ess.fi/feed/rss'],
@@ -78,13 +74,11 @@ ALLOWED_PUBLISHERS = (
     'liiga.fi',
     'yle.fi',
     'mtvuutiset.fi',
-    'pallomeri.net',
     'ksml.fi',
     'ess.fi',
     'karjalainen.fi',
     'kaleva.fi',
     'kalpa.fi',
-    'urheilusuomi.com',
     'suomikiekko.com',
     'kiekkouutiset.fi',
 )
@@ -117,6 +111,8 @@ def history_merge(fresh):
             for a in fresh:
                 db.execute('INSERT INTO articles(url,payload,timestamp,seen) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload, timestamp=excluded.timestamp, seen=excluded.seen', (a['url'], json.dumps(a, ensure_ascii=False), a['timestamp'], now))
             db.execute('DELETE FROM articles WHERE seen < ?', (now - HISTORY_DAYS * 86400,))
+            # Retire removed publishers from stored history too.
+            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
             rows = db.execute('SELECT payload FROM articles ORDER BY timestamp DESC LIMIT 500').fetchall()
         return [json.loads(row[0]) for row in rows], 'ok'
     except (OSError, sqlite3.Error) as exc:
@@ -263,16 +259,14 @@ def fetch_liiga():
 # Direct publisher category/team pages. Only public links present in HTML are used.
 # A 403 response is recorded and never bypassed.
 DIRECT_PAGES = {
-    'Jatkoaika': ['https://www.jatkoaika.com/Joukkue/KalPa'],
+    'Jatkoaika': [
+        'https://www.jatkoaika.com/Joukkue/KalPa',
+        'https://www.jatkoaika.com/haku?team%5B%5D=31437',
+        'https://www.jatkoaika.com/haku?keys=KalPa',
+    ],
     'KalPa.fi': ['https://kalpa.fi/'],
-    'UrheiluSuomi': ['https://www.urheilusuomi.com/jaakiekko/'],
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
-    'Pallomeri.net': [
-        'https://pallomeri.net/jaakiekko/liiga/',
-        'https://pallomeri.net/?s=KalPa',
-        'https://pallomeri.net/joukkueet/kalpa/',
-    ],
     # Publisher's own sports index; only real article permalinks are considered.
     'MTV Uutiset': [
         'https://www.mtvuutiset.fi/tuoreimmat/urheilu',
@@ -305,14 +299,9 @@ class DirectLinkParser(HTMLParser):
             valid_path = bool(re.fullmatch(r'/artikkeli/[^/?#]+/\d{6,10}/?', path, re.I))
         elif self.source == 'KalPa.fi':
             valid_path = bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', path))
-        elif self.source == 'UrheiluSuomi':
-            valid_path = path.startswith('/jaakiekko/') and path not in ('/jaakiekko/', '/jaakiekko') and len(path.split('/')) >= 4
         elif self.source == 'SuomiKiekko':
             # Publisher uses dated permalink URLs: /2026/10/article-slug/
             valid_path = bool(re.fullmatch(r'/20\d{2}/(?:0?[1-9]|1[0-2])/[a-z0-9-]+/?', path, re.I))
-        elif self.source == 'Pallomeri.net':
-            # Pallomeri article permalinks live at the site root, not in /joukkueet/.
-            valid_path = bool(re.fullmatch(r'/[a-z0-9][a-z0-9-]{12,}/?', path, re.I))
         elif self.source == 'Kiekkouutiset':
             # Article links, not category or index pages.
             valid_path = bool(re.fullmatch(r'/(?:liiga|uutiset|jaakiekko)/[a-z0-9-]{12,}/?', path, re.I))
@@ -418,7 +407,6 @@ def verify_suomikiekko_candidate(candidate):
             raise ValueError('Not about KalPa')
         if not headline or not valid_kalpa_headline(headline):
             raise ValueError('Missing headline')
-        # Pallomeri also publishes brief, fully readable match reports.
         # The article/main parser already excludes sidebars and image captions.
         if not paragraphs or sum(map(len, paragraphs)) < 180:
             raise ValueError('Public article text unavailable')
@@ -433,131 +421,6 @@ def verify_suomikiekko_candidate(candidate):
     with SUOMIKIEKKO_RESULT_LOCK:
         SUOMIKIEKKO_RESULT_CACHE[url] = (time.time(), item)
     return item
-
-# Pallomeri.net: publisher-owned Liiga index, site search and team archive.
-# Team archives may not include current stories tagged primarily with the opposing club.
-# Keep date, KalPa relevance and public-reader checks strict.
-PALLOMERI_CACHE = {}
-PALLOMERI_REJECTIONS = {}
-PALLOMERI_LOCK = threading.Lock()
-
-def verify_pallomeri_candidate(candidate):
-    url = candidate['url']
-    if urlparse(url).hostname not in ('pallomeri.net', 'www.pallomeri.net'):
-        return None
-    with PALLOMERI_LOCK:
-        cached = PALLOMERI_CACHE.get(url)
-        if cached and time.time() - cached[0] < 3600:
-            return cached[1]
-    item = None
-    try:
-        req = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/6.3)', 'Accept': 'text/html'})
-        with urlopen(req, timeout=8) as response:
-            if urlparse(response.geturl()).hostname not in ('pallomeri.net', 'www.pallomeri.net'):
-                raise ValueError('Unexpected redirect')
-            raw = response.read(1_200_001)
-            if len(raw) > 1_200_000:
-                raise ValueError('Page too large')
-            document = raw.decode(response.headers.get_content_charset() or 'utf-8', 'replace')
-        if PAYWALL_HINTS.search(document):
-            raise ValueError('Premium article')
-        stamp = publication_date_from_html(document, urlparse(url).hostname or '')
-        if not stamp or stamp < time.time() - HISTORY_DAYS*86400 or stamp > time.time()+86400:
-            raise ValueError('No recent original publication date')
-        parser = ReaderParser()
-        parser.feed(document)
-        paragraphs = max((list(dict.fromkeys(parser.paragraphs)),
-                          list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))),
-                          key=lambda ps: sum(map(len, ps)))
-        title = kalpa_headline_from_html(document)
-        if not valid_kalpa_headline(title):
-            raise ValueError('Missing article headline')
-        if not POSITIVE.search(title + ' ' + ' '.join(paragraphs)):
-            raise ValueError('Not about KalPa')
-        # Pallomeri also publishes brief, fully readable match reports.
-        # The article/main parser already excludes sidebars and image captions.
-        if not paragraphs or sum(map(len, paragraphs)) < 180:
-            raise ValueError('Public article text unavailable')
-        item = dict(candidate, title=title, timestamp=stamp,
-                    published=datetime.fromtimestamp(stamp, timezone.utc).isoformat())
-        with FREE_CACHE_LOCK:
-            FREE_CACHE[url] = (time.time(), True)
-    except (OSError, ValueError, TimeoutError, UnicodeError) as exc:
-        with PALLOMERI_LOCK:
-            PALLOMERI_REJECTIONS[url] = str(exc)[:110] or type(exc).__name__
-    with PALLOMERI_LOCK:
-        PALLOMERI_CACHE[url] = (time.time(), item)
-    return item
-
-# Publisher-native WordPress search avoids reliance on an RSS endpoint that
-# sometimes returns non-XML HTML and on category pages that expose no anchors.
-# The editorial site itself is the sole discovery provider (no Google News).
-PALLOMERI_NATIVE_SEARCHES = [
-    'https://pallomeri.net/wp-json/wp/v2/search?search=KalPa&per_page=50',
-    'https://pallomeri.net/?rest_route=%2Fwp%2Fv2%2Fsearch&search=KalPa&per_page=50',
-]
-# Verified publisher URLs provide a temporary, date-checked fallback when the
-# publisher's search infrastructure is unavailable. These are NOT assigned
-# fabricated timestamps: each original article must be fetched and verified.
-PALLOMERI_KNOWN_ARTICLES = [
-    'https://pallomeri.net/kalle-ervasti-suihkuun-vs-kalpa/',
-    'https://pallomeri.net/rasmus-rissanen-pelikieltoon/',
-    'https://pallomeri.net/liiga-nelja-rangaistusta-sukeltamisesta/',
-]
-
-def fetch_pallomeri_native():
-    candidates = {}
-    checks = []
-    for url in PALLOMERI_NATIVE_SEARCHES:
-        try:
-            req = Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/6.5)',
-                'Accept': 'application/json',
-            })
-            with urlopen(req, timeout=8) as response:
-                if not allowed_publisher(response.geturl()):
-                    raise ValueError('Redirect outside publisher')
-                raw = response.read(1_500_001)
-                content_type = response.headers.get('Content-Type', '')
-                if len(raw) > 1_500_000: raise ValueError('Response too large')
-            try:
-                entries = json.loads(raw.decode('utf-8-sig'))
-            except (ValueError, UnicodeError):
-                raise ValueError('Publisher API returned non-JSON content: ' +
-                                 strip_markup(raw[:140].decode('utf-8','replace'))[:100])
-            if not isinstance(entries, list):
-                raise ValueError('Publisher API did not return article list')
-            added = 0
-            for entry in entries:
-                if not isinstance(entry, dict): continue
-                link = entry.get('url') or entry.get('link') or ''
-                parsed = urlparse(link)
-                if parsed.hostname not in ('pallomeri.net', 'www.pallomeri.net'): continue
-                if not re.fullmatch(r'/[a-z0-9][a-z0-9-]{12,}/?', parsed.path, re.I): continue
-                title = strip_markup(entry.get('title', {}).get('rendered', '') if isinstance(entry.get('title'), dict) else entry.get('title', ''))
-                if link not in candidates:
-                    candidates[link] = {'source':'Pallomeri.net', 'title':title,
-                                        'url':link, 'summary':'', 'timestamp':0, 'published':''}
-                    added += 1
-            checks.append({'url':url, 'status':'ok', 'results':len(entries), 'candidates_added':added,
-                           'content_type':content_type})
-            if candidates: break
-        except Exception as exc:
-            checks.append({'url':url, 'status':'error',
-                           'message':f'{type(exc).__name__}: {str(exc)[:125]}'})
-    for link in PALLOMERI_KNOWN_ARTICLES:
-        candidates.setdefault(link, {'source':'Pallomeri.net', 'title':'',
-                                    'url':link, 'summary':'', 'timestamp':0, 'published':''})
-    # The short curated fallback is strictly subject to the same date,
-    # paywall, article-text, and KalPa-relevance checks as normal results.
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        verified = list(pool.map(verify_pallomeri_candidate, list(candidates.values())[:55]))
-    articles = [a for a in verified if a]
-    return articles, {'status':'ok' if articles else 'empty', 'count':len(articles),
-                      'candidate_count_raw':len(candidates), 'api_attempts':checks,
-                      'rejection_samples':[
-                         {'url':url,'reason':PALLOMERI_REJECTIONS.get(url, 'not verified')}
-                         for url in candidates if url in PALLOMERI_REJECTIONS][:8]}
 
 def fetch_direct(source, pages):
     all_items, seen, diagnostics = [], set(), []
@@ -577,27 +440,14 @@ def fetch_direct(source, pages):
                 # never mention KalPa. Check their actual content separately.
                 path_label = unquote(urlparse(link).path).replace('-', ' ')
                 is_sk_search = source == 'SuomiKiekko' and 's=KalPa' in page
-                is_pallomeri_search = source == 'Pallomeri.net' and ('s=KalPa' in page or '/joukkueet/kalpa/' in page)
                 if (link in seen or NEGATIVE.search(title)
-                    or (source not in ('KalPa.fi',) and not is_sk_search and not is_pallomeri_search
+                    or (source not in ('KalPa.fi',) and not is_sk_search
                         and not POSITIVE.search(title + ' ' + path_label))):
                     continue
                 seen.add(link)
                 page_candidates.append({'title': title, 'source': source, 'url': link,
                                         'summary': '', 'timestamp': 0, 'published': ''})
-            if source == 'Pallomeri.net':
-                # Verify the actual article body because team-search headlines
-                # may not explicitly contain the word KalPa.
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    checked = list(executor.map(verify_pallomeri_candidate, page_candidates[:35]))
-                all_items.extend(item for item in checked if item is not None)
-                diagnostics.append({'page': page, 'status': 'ok',
-                    'scanned': len(parser.links), 'candidates_checked': min(len(page_candidates), 35),
-                    'verified_articles': sum(item is not None for item in checked),
-                    'rejection_samples': [
-                        {'url': a['url'], 'reason': PALLOMERI_REJECTIONS.get(a['url'], 'not accepted')}
-                        for a in page_candidates[:35] if a['url'] in PALLOMERI_REJECTIONS][:8]})
-            elif source == 'SuomiKiekko':
+            if source == 'SuomiKiekko':
                 # Limit page fetches so Render doesn't stall on a publisher.
                 with ThreadPoolExecutor(max_workers=6) as executor:
                     checked = list(executor.map(verify_suomikiekko_candidate, page_candidates[:70]))
@@ -965,10 +815,7 @@ def is_verified_free(article):
                 visible=list(dict.fromkeys(parser.paragraphs))
                 structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
                 paragraphs=max((visible, structured), key=lambda ps:sum(map(len,ps)))
-                if parsed.hostname in ('pallomeri.net', 'www.pallomeri.net'):
-                    ok = bool(paragraphs) and sum(map(len,paragraphs))>=180
-                else:
-                    ok = len(paragraphs)>=2 and sum(map(len,paragraphs))>=450
+                ok = len(paragraphs)>=2 and sum(map(len,paragraphs))>=450
     except (Exception):
         ok = False
     with FREE_CACHE_LOCK:
@@ -1297,8 +1144,6 @@ def _timed_source(kind, source, targets=None):
             articles, info = fetch_direct(source, targets)
         elif kind == 'mtv_sitemap':
             articles, info = fetch_mtv_sitemap()
-        elif kind == 'pallomeri_api':
-            articles, info = fetch_pallomeri_native()
         else:
             articles, info = fetch_liiga_news()
     except Exception as exc:
@@ -1315,7 +1160,6 @@ def _build_news():
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
             + [('liiga', 'Liiga.fi', None)]
-            + [('pallomeri_api', 'Pallomeri.net', None)]
             )  # v6.1: MTV team page replaces low-yield sitemap scan
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.
@@ -1325,8 +1169,6 @@ def _build_news():
         items.extend(found)
         if kind == 'direct':
             sources.setdefault(source, {})['direct_pages'] = info
-        elif kind == 'pallomeri_api':
-            sources.setdefault(source, {})['publisher_search'] = info
         elif kind == 'mtv_sitemap':
             sources.setdefault(source, {})['sitemap'] = info
         else:
@@ -1336,8 +1178,6 @@ def _build_news():
     for kind, source, found, info in outcomes:
         if kind == 'direct':
             sources[source]['direct_pages'] = info
-        elif kind == 'pallomeri_api':
-            sources[source]['publisher_search'] = info
     
     seen=set(); unique=[]
     for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
@@ -1352,7 +1192,7 @@ def _build_news():
         resolved_by_url={a['url']:a for a in resolved}
         unique=[resolved_by_url.get(a['url'],a) for a in unique]
     historical,history_status=history_merge(unique)
-    historical=[a for a in historical if a.get('source') != 'Kiekkoareena' and allowed_publisher(str(a.get('url') or ''))]
+    historical=[a for a in historical if a.get('source') not in ('Kiekkoareena', 'Pallomeri.net', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
     # A direct HTML index has no reliable publication timestamp (timestamp=0).
     # Never present such an article as current; publisher-search/RSS articles
     # with a real timestamp remain eligible. This also cleans persisted history.
@@ -1577,9 +1417,8 @@ def article_for(original, verify_only=False):
     visible=list(dict.fromkeys(parser.paragraphs))
     structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
     paragraphs=max((visible,structured),key=lambda ps:sum(map(len,ps)))
-    is_pallomeri = urlparse(original).hostname in ('pallomeri.net', 'www.pallomeri.net')
-    min_chars = 180 if is_pallomeri else 450
-    min_paras = 1 if is_pallomeri else 2
+    min_chars = 450
+    min_paras = 2
     if sum(map(len,paragraphs))<min_chars or len(paragraphs)<min_paras:
         return {'status':'summary','paragraphs':[],'original_url':original,
                 'message':'Kokotekstiä ei löytynyt julkisesta sivusta.',
