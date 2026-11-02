@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.4 — Pallomeri Liiga source and short public articles fixed."""
+"""KalPa365 v6.5 — Pallomeri publisher-native discovery fallback."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -488,6 +488,76 @@ def verify_pallomeri_candidate(candidate):
     with PALLOMERI_LOCK:
         PALLOMERI_CACHE[url] = (time.time(), item)
     return item
+
+# Publisher-native WordPress search avoids reliance on an RSS endpoint that
+# sometimes returns non-XML HTML and on category pages that expose no anchors.
+# The editorial site itself is the sole discovery provider (no Google News).
+PALLOMERI_NATIVE_SEARCHES = [
+    'https://pallomeri.net/wp-json/wp/v2/search?search=KalPa&per_page=50',
+    'https://pallomeri.net/?rest_route=%2Fwp%2Fv2%2Fsearch&search=KalPa&per_page=50',
+]
+# Verified publisher URLs provide a temporary, date-checked fallback when the
+# publisher's search infrastructure is unavailable. These are NOT assigned
+# fabricated timestamps: each original article must be fetched and verified.
+PALLOMERI_KNOWN_ARTICLES = [
+    'https://pallomeri.net/kalle-ervasti-suihkuun-vs-kalpa/',
+    'https://pallomeri.net/rasmus-rissanen-pelikieltoon/',
+    'https://pallomeri.net/liiga-nelja-rangaistusta-sukeltamisesta/',
+]
+
+def fetch_pallomeri_native():
+    candidates = {}
+    checks = []
+    for url in PALLOMERI_NATIVE_SEARCHES:
+        try:
+            req = Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/6.5)',
+                'Accept': 'application/json',
+            })
+            with urlopen(req, timeout=8) as response:
+                if not allowed_publisher(response.geturl()):
+                    raise ValueError('Redirect outside publisher')
+                raw = response.read(1_500_001)
+                content_type = response.headers.get('Content-Type', '')
+                if len(raw) > 1_500_000: raise ValueError('Response too large')
+            try:
+                entries = json.loads(raw.decode('utf-8-sig'))
+            except (ValueError, UnicodeError):
+                raise ValueError('Publisher API returned non-JSON content: ' +
+                                 strip_markup(raw[:140].decode('utf-8','replace'))[:100])
+            if not isinstance(entries, list):
+                raise ValueError('Publisher API did not return article list')
+            added = 0
+            for entry in entries:
+                if not isinstance(entry, dict): continue
+                link = entry.get('url') or entry.get('link') or ''
+                parsed = urlparse(link)
+                if parsed.hostname not in ('pallomeri.net', 'www.pallomeri.net'): continue
+                if not re.fullmatch(r'/[a-z0-9][a-z0-9-]{12,}/?', parsed.path, re.I): continue
+                title = strip_markup(entry.get('title', {}).get('rendered', '') if isinstance(entry.get('title'), dict) else entry.get('title', ''))
+                if link not in candidates:
+                    candidates[link] = {'source':'Pallomeri.net', 'title':title,
+                                        'url':link, 'summary':'', 'timestamp':0, 'published':''}
+                    added += 1
+            checks.append({'url':url, 'status':'ok', 'results':len(entries), 'candidates_added':added,
+                           'content_type':content_type})
+            if candidates: break
+        except Exception as exc:
+            checks.append({'url':url, 'status':'error',
+                           'message':f'{type(exc).__name__}: {str(exc)[:125]}'})
+    for link in PALLOMERI_KNOWN_ARTICLES:
+        candidates.setdefault(link, {'source':'Pallomeri.net', 'title':'',
+                                    'url':link, 'summary':'', 'timestamp':0, 'published':''})
+    # The short curated fallback is strictly subject to the same date,
+    # paywall, article-text, and KalPa-relevance checks as normal results.
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        verified = list(pool.map(verify_pallomeri_candidate, list(candidates.values())[:55]))
+    articles = [a for a in verified if a]
+    return articles, {'status':'ok' if articles else 'empty', 'count':len(articles),
+                      'candidate_count_raw':len(candidates), 'api_attempts':checks,
+                      'rejection_samples':[
+                         {'url':url,'reason':PALLOMERI_REJECTIONS.get(url, 'not verified')}
+                         for url in candidates if url in PALLOMERI_REJECTIONS][:8]}
 
 def fetch_direct(source, pages):
     all_items, seen, diagnostics = [], set(), []
@@ -1227,6 +1297,8 @@ def _timed_source(kind, source, targets=None):
             articles, info = fetch_direct(source, targets)
         elif kind == 'mtv_sitemap':
             articles, info = fetch_mtv_sitemap()
+        elif kind == 'pallomeri_api':
+            articles, info = fetch_pallomeri_native()
         else:
             articles, info = fetch_liiga_news()
     except Exception as exc:
@@ -1243,6 +1315,7 @@ def _build_news():
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
             + [('liiga', 'Liiga.fi', None)]
+            + [('pallomeri_api', 'Pallomeri.net', None)]
             )  # v6.1: MTV team page replaces low-yield sitemap scan
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.
@@ -1252,6 +1325,8 @@ def _build_news():
         items.extend(found)
         if kind == 'direct':
             sources.setdefault(source, {})['direct_pages'] = info
+        elif kind == 'pallomeri_api':
+            sources.setdefault(source, {})['publisher_search'] = info
         elif kind == 'mtv_sitemap':
             sources.setdefault(source, {})['sitemap'] = info
         else:
@@ -1261,6 +1336,8 @@ def _build_news():
     for kind, source, found, info in outcomes:
         if kind == 'direct':
             sources[source]['direct_pages'] = info
+        elif kind == 'pallomeri_api':
+            sources[source]['publisher_search'] = info
     
     seen=set(); unique=[]
     for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
