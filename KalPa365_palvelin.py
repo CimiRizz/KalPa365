@@ -2060,21 +2060,42 @@ def official_news(team):
             threading.Thread(target=_refresh_official_club,args=(team,),daemon=True).start()
         return list(state['articles']),state['refreshing'],state['error'],list(state['diagnostics'])
 
+# Liiga365 v0.7: two distinct phases. Official club results reach the client
+# before broad media fetches are started. Old official results are kept during
+# refresh instead of blanking the response. Existing KalPa collector is retained.
 _previous_news_with_publishers=team_news
 def team_news(team):
-    base=_previous_news_with_publishers(team)
-    if team not in TEAMS or team=='kalpa':return base
+    if team not in TEAMS:
+        return {'status':'error','articles':[],'error':'Unknown team'}
+    if team == 'kalpa':
+        base=_previous_news_with_publishers(team)
+        base['phase']='media' if base.get('refreshing') else 'complete'
+        return base
+
     own,busy,error,diagnostics=official_news(team)
+    official_source=TEAMS[team]+' (virallinen)'
+    official_meta={'status':'loading' if busy else ('error' if error else 'ok'),
+                   'count':len(own),'pages':diagnostics}
+    if busy:
+        # Do not launch league/publisher jobs until this club's official fetch ends.
+        # Return any verified official articles immediately as they are collected.
+        return {'team':team,'status':'ok' if own else 'loading',
+                'articles':own[:100],'refreshing':True,'partial':True,
+                'phase':'official','updated':None,
+                'sources':{official_source:official_meta},
+                'errors':['Virallinen kotisivu: '+error] if error else [],
+                'coverage':official_source}
+
+    base=_previous_news_with_publishers(team)
     combined={a['url']:a for a in base.get('articles',[])+own if a.get('url')}
     base['articles']=sorted(combined.values(),key=lambda a:a.get('timestamp',0),reverse=True)[:100]
-    base['refreshing']=bool(base.get('refreshing') or busy)
+    base['refreshing']=bool(base.get('refreshing'))
     base['partial']=base['refreshing']
+    base['phase']='media' if base['refreshing'] else 'complete'
     base['status']='ok' if base['articles'] else ('loading' if base['refreshing'] else 'empty')
-    base.setdefault('sources',{})[TEAMS[team]+' (virallinen)']={
-        'status':'loading' if busy else ('error' if error else 'ok'),
-        'count':len(own),'pages':diagnostics}
+    base.setdefault('sources',{})[official_source]=official_meta
     if error:base.setdefault('errors',[]).append('Virallinen kotisivu: '+error)
-    base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset, '+TEAMS[team]+' (virallinen)'
+    base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset, '+official_source
     return base
 
 class Handler(BaseHTTPRequestHandler):

@@ -1,23 +1,25 @@
-# Liiga365 v0.6 – virallisten seurasivujen uutiskorjaukset
+# Liiga365 v0.7 – välitön uutisnäyttö ja virallinen lähde ensin
 
-Perustuu Liiga365 v0.5:een. Branch: `feature/liiga365`. KalPa365 `main` ja lukittu käyttöliittymä pysyvät koskemattomina.
+Tämä paketti on tarkoitettu vain GitHubin `feature/liiga365`-haaraan. KalPa365:n `main`-haaraan ei tehdä muutoksia.
 
-## Korjaukset
+## Muutokset
 
-- **Jokerit**: virallinen lähde vaihdettu `jokerit.com` → `jokerit.fi`; `https://www.jokerit.fi/uutiset`, Squarespace-uutis-RSS ja suomenkielisten pitkien julkaisupäivien varatunnistus.
-- **Jukurit**: `/fi-fi/cg/uutiset/1/` sekä suomenkielinen etusivu; WiseNetwork-artikkeleiden julkaisuajan tunnistus otsikon vierestä.
-- **Kiekko-Espoo**: vanha `kiekko-espoo.com` → virallinen liigajoukkueen `kiekko-espoo.fi/uutiset-ja-tarinat/`; lisäksi WordPressin julkinen read-only REST API -varahaku ja RSS-yritykset.
-- **SaiPa**: `/fi-fi/cg/uutiset/1/`, `/fi-fi/`; WiseNetwork-julkaisuajan varatunnistus.
-- **TPS**: useampi uutiskategorian reitti, `/fi-fi/` ja WiseNetwork-julkaisuajan varatunnistus.
-- Näkyvämpi lähdekohtainen diagnostiikka: `article_checks`, `accepted`, `candidate_links`.
-- Muiden joukkueiden lähteet, nopea uutishaku, ottelut, lukutila ja UI ennallaan.
+- Selaimen `localStorage` säilyttää **kunkin joukkueen kolme viimeksi näytettyä uutista** (otsikko, lähde, linkki, julkaisuajankohta ja mahdollinen tiivistelmä). Ne näytetään heti sivua avattaessa tai joukkuetta vaihdettaessa; tämä ei vaadi verkkoyhteyttä näyttövaiheessa.
+- Aiemmin tallennetut uutiset pysyvät näkyvissä, kunnes uusia on saatu; tyhjä tai epäonnistunut haku ei tyhjennä niitä.
+- Muille kuin KalPalle `/api/news?team=...` palauttaa ensin oman virallisen verkkosivun löydökset (`phase: official`). Vasta virallisen sivun haun valmistuttua alkaa yhteisten Liiga.fi- ja muiden medioiden haku (`phase: media`). Lopuksi `phase: complete`.
+- Uutisia päivitetään edelleen ajantasaisuusjärjestyksessä; lähteen prioriteetti määrää hakujärjestyksen, ei sitä, mitkä ovat lopulta kolme uusinta.
+- Uutishaku jatkuu 2,5 sekunnin kyselyvälillä haun ollessa käynnissä.
+- KalPan vanha haku säilyy: se ei ole vielä jaettu virallinen/muut mediat -vaiheisiin.
+- Visuaalinen ulkoasu ja asettelu eivät muutu.
 
 ## Asennus
 
-GitHubissa valitse **feature/liiga365**, korvaa **vain KalPa365_palvelin.py** ja julkaise erilliseen Liiga365-Render-palveluun. Älä korvaa KalPa365-mainia.
+Korvaa `feature/liiga365`-haarassa **kaksi tiedostoa**, `KalPa365_palvelin.py` ja `index.html`. Uusi toiminnallisuus tarvitsee sekä palvelimen vaiheistuksen että selaimen välimuistin. Renderin Start Command säilyy `python KalPa365_palvelin.py`.
 
-Testaa `/api/news?team=jokerit`, `jukurit`, `kiekko-espoo`, `saipa`, `tps`. Ensimmäinen vastaus voi sisältää `refreshing: true`, jolloin lähdekohtainen haku on vielä käynnissä; päivitä tai odota sivun automaattista päivitystä. `sources`-kohdasta näet `count`, `pages` ja uudet diagnostiikkakentät.
+Selaimen localStorage on selain- ja laitekohtainen, eikä säily incognito-istunnon päättyessä tai käyttäjän tyhjentäessä sivuston tallennustiedot. Palvelimen uudelleenkäynnistys ei tyhjennä selaimeen tallennettuja kolmea otsikkoa.
 
-## Varmennus
+## Testit
 
-29/29 yksikkötestiä läpäisty ja Python-syntaksi tarkistettu. Sivustojen live-vastauksia Renderistä ei ole varmennettu. WordPress-rajapinta voi olla suljettu eikä ole varmaa, että se palauttaa artikkelit; silloinkin perinteinen HTML/RSS-haku jatkuu.
+`python -m unittest discover -s tests -q`
+
+Tarkistukset suoritettiin 32/32 hyväksytysti ja JavaScript-tiedoston syntaksi tarkistettiin Node.js:n `--check`-komennolla. Tuotantoympäristön lähteitä ei testattu tässä suoritusympäristössä.

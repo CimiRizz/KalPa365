@@ -21,9 +21,21 @@
 @media(max-width:600px){.team-choices{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 <header><div class="brand"><div class="mark"><img class="kalpa-logo" src="/kalpa-logo.png" onerror="this.onerror=null;this.src='/kalpa-logo.svg'" alt="KalPan logo" width="70" height="76"></div><div><h1 id="siteName">Liiga365</h1><p id="siteSubtitle">Valitse seurattava joukkue.</p></div><button class="team-switch" id="changeTeam" type="button">Vaihda joukkuetta</button></div></header>
-<main><section class="matches" aria-label="Valitun joukkueen seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: Liiga.fi (kausi 2026–2027). Tarkista mahdolliset muutokset virallisesta otteluohjelmasta.</p></section><section class="latest-news" aria-label="Kolme uusinta joukkueuutista"><h2>3 uusinta uutista</h2><div id="latestGrid" class="grid"><div class="empty">Haetaan uusimpia uutisia…</div></div></section><div class="bar"><input id="search" type="search" placeholder="Hae joukkueen uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan joukkueen uutisia…</div><div id="grid" class="grid"></div><p class="note">Liiga365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin Liiga365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole Liigan tai seurojen ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">KalPa365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>Liiga365 · kokeiluversio 0.2 · feature/liiga365</footer>
+<main><section class="matches" aria-label="Valitun joukkueen seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: Liiga.fi (kausi 2026–2027). Tarkista mahdolliset muutokset virallisesta otteluohjelmasta.</p></section><section class="latest-news" aria-label="Kolme uusinta joukkueuutista"><h2>3 uusinta uutista</h2><div id="latestGrid" class="grid"><div class="empty">Haetaan uusimpia uutisia…</div></div></section><div class="bar"><input id="search" type="search" placeholder="Hae joukkueen uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan joukkueen uutisia…</div><div id="grid" class="grid"></div><p class="note">Liiga365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin Liiga365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole Liigan tai seurojen ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">Liiga365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>Liiga365 · kokeiluversio 0.7 · feature/liiga365</footer>
 <script>
 const $=id=>document.getElementById(id);let selectedTeam=null;let articles=[];let lastUpdate='';let readerLastFocus=null;
+// v0.7: Cache only the three newest articles per club in this browser.
+// An empty/failed response never overwrites previously saved articles.
+const NEWS_CACHE_PREFIX='liiga365-latest-v1-';
+function readLatest(team){try{
+ const item=JSON.parse(localStorage.getItem(NEWS_CACHE_PREFIX+team)||'null');
+ return Array.isArray(item?.articles)?item.articles.filter(a=>a&&a.url&&a.title).slice(0,3):[];
+}catch(e){return []}}
+function saveLatest(team,items){if(!items.length)return;try{
+ localStorage.setItem(NEWS_CACHE_PREFIX+team,JSON.stringify({savedAt:Date.now(),articles:items.slice(0,3)}));
+}catch(e){}}
+let newsFetchSequence=0;let newsFetchFor=null;
+
 const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=t=>t?new Date(t*1000).toLocaleString('fi-FI',{day:'numeric',month:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'Julkaisuaika ei tiedossa';
 async function openReader(index){const a=articles[index];if(!a)return;readerLastFocus=document.activeElement;$('readerMeta').textContent=a.source+' · '+date(a.timestamp);$('readerTitle').textContent=a.title;const plain=(a.summary||'').replace(/\s+/g,' ').trim();$('readerText').textContent=plain||'Haetaan artikkelin sisältöä…';$('readerOriginal').href=a.url;$('readerOverlay').classList.add('open');$('readerOverlay').setAttribute('aria-hidden','false');document.body.style.overflow='hidden';$('readerClose').focus();$('readerText').textContent='Haetaan artikkelin tekstiä…';try{const response=await fetch('/api/article?url='+encodeURIComponent(a.url));const data=await response.json();if(!$('readerOverlay').classList.contains('open')||$('readerTitle').textContent!==a.title)return;if(data.status==='full'&&data.paragraphs?.length){$('readerText').replaceChildren(...data.paragraphs.map(p=>{const el=document.createElement('p');el.textContent=p;return el}));}else{$('readerText').textContent=plain||data.message||'Koko tekstiä ei voi hakea tähän näkymään. Avaa artikkeli alkuperäisellä sivustolla alla olevasta painikkeesta.';}if(data.original_url)$('readerOriginal').href=data.original_url;}catch(e){$('readerText').textContent=plain||'Sisältöä ei voitu hakea. Avaa artikkeli alkuperäisellä sivustolla alla olevasta painikkeesta.';}}
@@ -41,19 +53,30 @@ function render(){
   $('status').textContent=`${filtered.length} muuta uutista${lastUpdate?' · Päivitetty '+lastUpdate:''}`;
   $('grid').innerHTML=filtered.length?filtered.map(newsCard).join(''):'<div class="empty">Ei muita uutisia valituilla hakuehdoilla.</div>';
 }
-let newsRequestInFlight = false;
 let newsRefreshing = false;
 async function load(){
-  if(newsRequestInFlight)return;
-  newsRequestInFlight = true;
-  const btn=$('refresh'); btn.disabled=true;
+  if(!selectedTeam)return;
+  const requestedTeam=selectedTeam;
+  if(newsFetchFor===requestedTeam)return;
+  newsFetchFor=requestedTeam;
+  const sequence=++newsFetchSequence;
+  const btn=$('refresh');btn.disabled=true;
   try{
-    const r=await fetch('/api/news?team='+encodeURIComponent(selectedTeam||'kalpa'),{cache:'no-store'});
+    const r=await fetch('/api/news?team='+encodeURIComponent(requestedTeam),{cache:'no-store'});
     if(!r.ok)throw Error('Palvelinvirhe '+r.status);
     const data=await r.json();
+    if(sequence!==newsFetchSequence||requestedTeam!==selectedTeam)return;
     const incoming=(data.articles||[]).sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0));
-    if(incoming.length || !articles.length) articles=incoming;
-    if(data.updated && data.status!=='loading') lastUpdate=new Date(data.updated).toLocaleTimeString('fi-FI',{hour:'2-digit',minute:'2-digit'});
+    // Keep previously saved three visible while new sources are still loading.
+    // When the club stage completes, replace them with the latest verified set.
+    if(incoming.length){
+      if(data.phase==='official' && articles.length){
+        const combined=new Map([...articles,...incoming].filter(a=>a?.url).map(a=>[a.url,a]));
+        articles=[...combined.values()].sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0));
+      }else articles=incoming;
+      saveLatest(requestedTeam,articles);
+    }
+    if(data.updated && data.status!=='loading')lastUpdate=new Date(data.updated).toLocaleTimeString('fi-FI',{hour:'2-digit',minute:'2-digit'});
     const prev=$('source').value;
     const counts={};for(const a of articles)counts[a.source]=(counts[a.source]||0)+1;
     const sources=[...new Set([...Object.keys(data.sources||{}),...articles.map(a=>a.source)])].sort((a,b)=>a.localeCompare(b,'fi'));
@@ -61,12 +84,15 @@ async function load(){
     if(sources.includes(prev))$('source').value=prev;
     render();
     newsRefreshing=!!data.refreshing;
-    if(data.refreshing) $('status').textContent += ' · Päivitetään uutisia taustalla…';
-    if(data.errors?.length) $('status').textContent += ' · Osa lähteistä ei vastannut';
-    if(data.status==='error' && !articles.length) $('status').textContent='Uutisten haku epäonnistui. Yritä myöhemmin uudelleen.';
+    if(data.phase==='official')$('status').textContent+=' · Tarkistetaan seuran kotisivu…';
+    else if(data.refreshing)$('status').textContent+=' · Haetaan muiden medioiden uutisia…';
+    if(data.errors?.length)$('status').textContent+=' · Osa lähteistä ei vastannut';
+    if(data.status==='error'&&!articles.length)$('status').textContent='Uutisten haku epäonnistui. Yritä myöhemmin uudelleen.';
   }catch(e){
-    $('status').textContent='Uutisten lataaminen epäonnistui: '+e.message;
-  }finally{ btn.disabled=false;newsRequestInFlight=false; }
+    if(sequence===newsFetchSequence)$('status').textContent='Uutisten päivitys ei onnistunut. Viimeksi tallennetut uutiset säilyvät näkyvissä.';
+  }finally{
+    if(sequence===newsFetchSequence){btn.disabled=false;newsFetchFor=null;}
+  }
 }
 $('latestGrid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('grid').addEventListener('click',e=>{const b=e.target.closest('[data-reader]');if(b)openReader(Number(b.dataset.reader))});$('search').addEventListener('input',render);$('source').addEventListener('change',render);$('refresh').addEventListener('click',()=>{if(selectedTeam)load()});setInterval(()=>{if(selectedTeam&&!document.hidden&&newsRefreshing)load()},2500);setInterval(()=>{if(selectedTeam&&!document.hidden&&!newsRefreshing)load()},60000);
 
@@ -152,8 +178,11 @@ function setTeam(id){
    brandLogo.alt=TEAM_LABELS[id]+'-logo';
    brandLogo.parentElement.style.display=(typeof TEAM_LOGOS!=='undefined' && TEAM_LOGOS[id])?'':'none';
  }
- articles=[]; lastUpdate=''; $('source').value='';$('search').value='';
- $('latestGrid').innerHTML='<div class="empty">Haetaan uutisia…</div>';
+ // Invalidate outstanding responses from the previously selected team.
+ newsFetchSequence++;newsFetchFor=null;newsRefreshing=false;
+ articles=readLatest(id);lastUpdate='';$('source').value='';$('search').value='';
+ render();
+ $('status').textContent=articles.length?'Näytetään tallennetut uutiset · Tarkistetaan seuran kotisivu…':'Haetaan seuran uusimpia uutisia…';
  $('grid').innerHTML='';
  load();loadMatches();
 }
