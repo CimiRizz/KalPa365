@@ -1,3 +1,23 @@
+# Liiga365 v0.11 – uutislistan vakauskorjaus
+
+Korjattu selaimen `index.html`-tiedostossa kolme uusinta uutista hetkellisesti piilottanut bugi.
+
+Palvelin palauttaa virallisen lähteen ja medioiden välivaiheissa osittaisia
+uutislistoja. Aiemmin selain ylikirjoitti uutislistan media-vaiheen vajavaisella
+tulosjoukolla ja palautti tuoreimmat vasta loppuvaiheessa. Nyt selain yhdistää
+uudet tulokset vanhoihin kaikissa vaiheissa, järjestää julkaisuajan mukaan,
+poistaa URL-kaksoiskappaleet ja tallentaa kolme tuoreinta selaimen muistiin.
+
+## Asennus
+
+Korvaa **vain `index.html`** GitHubin `feature/liiga365`-branchissa.
+`KalPa365_palvelin.py` on sama kuin v0.10:ssä. Ulkoasua ei muutettu.
+
+## Tarkistus
+
+JavaScript-syntaksi ja välimuistin / osittaisten uutishakujen regressiotestit
+on ajettu paikallisesti. Render-live-toimintaa ei ole vahvistettu.
+
 # Liiga365 v0.10 – nopeampi seuran uutishaku
 
 Pohjautuu v0.9-versioon: selaimen uutisvälimuisti, oikeat latausilmoitukset, lukutilan Liiga365-nimi ja joukkuekohtainen uutishaku säilyvät.

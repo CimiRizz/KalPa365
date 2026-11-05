@@ -21,7 +21,7 @@
 @media(max-width:600px){.team-choices{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 <header><div class="brand"><div class="mark"><img class="kalpa-logo" src="/kalpa-logo.png" onerror="this.onerror=null;this.src='/kalpa-logo.svg'" alt="KalPan logo" width="70" height="76"></div><div><h1 id="siteName">Liiga365</h1><p id="siteSubtitle">Valitse seurattava joukkue.</p></div><button class="team-switch" id="changeTeam" type="button">Vaihda joukkuetta</button></div></header>
-<main><section class="matches" aria-label="Valitun joukkueen seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: Liiga.fi (kausi 2026–2027). Tarkista mahdolliset muutokset virallisesta otteluohjelmasta.</p></section><section class="latest-news" aria-label="Kolme uusinta joukkueuutista"><h2>3 uusinta uutista</h2><div id="latestGrid" class="grid"><div class="empty">Haetaan uusimpia uutisia…</div></div></section><div class="bar"><input id="search" type="search" placeholder="Hae joukkueen uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan joukkueen uutisia…</div><div id="grid" class="grid"></div><p class="note">Liiga365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin Liiga365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole Liigan tai seurojen ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">Liiga365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>Liiga365 · kokeiluversio 0.9 · feature/liiga365</footer>
+<main><section class="matches" aria-label="Valitun joukkueen seuraavat kolme ottelua"><h2>Seuraavat 3 ottelua</h2><div class="matches-grid" id="nextMatches"><div class="match">Ladataan otteluita…</div></div><p class="matches-note">Ottelutiedot: Liiga.fi (kausi 2026–2027). Tarkista mahdolliset muutokset virallisesta otteluohjelmasta.</p></section><section class="latest-news" aria-label="Kolme uusinta joukkueuutista"><h2>3 uusinta uutista</h2><div id="latestGrid" class="grid"><div class="empty">Haetaan uusimpia uutisia…</div></div></section><div class="bar"><input id="search" type="search" placeholder="Hae joukkueen uutisista…" aria-label="Hae uutisista"><select id="source" aria-label="Uutislähde"><option value="">Kaikki uutislähteet</option></select><button id="refresh">↻ Päivitä uutiset</button></div><div id="status" class="summary" role="status">Haetaan joukkueen uutisia…</div><div id="grid" class="grid"></div><p class="note">Liiga365 kokoaa julkisten uutissyötteiden otsikoita ja linkkejä. Uutiset avautuvat ensin Liiga365:n häiriöttömään lukutilaan. Koko artikkelin voi avata myös julkaisijan sivulla. Uutisten saatavuus riippuu lähteistä; osa artikkeleista voi olla maksumuurin takana. Palvelu on epävirallinen eikä ole Liigan tai seurojen ylläpitämä.</p></main><div id="readerOverlay" class="reader-overlay" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true"><div class="reader"><button id="readerClose" class="reader-close" aria-label="Sulje lukutila">✕</button><div id="readerMeta" class="reader-meta"></div><h2 id="readerTitle"></h2><div id="readerText"></div><a id="readerOriginal" class="reader-link" target="_blank" rel="noopener noreferrer">Avaa alkuperäinen artikkeli ↗</a><p class="reader-notice">Liiga365 yrittää näyttää artikkelin julkisesti saatavilla olevan tekstin ilman evästeikkunoita. Jos tekstin haku ei onnistu, näytetään syötteen tiivistelmä tai otsikko.</p></div></div><footer>Liiga365 · kokeiluversio 0.11 · feature/liiga365</footer>
 <script>
 const $=id=>document.getElementById(id);let selectedTeam=null;let articles=[];let lastUpdate='';let readerLastFocus=null;
 // v0.7: Cache only the three newest articles per club in this browser.
@@ -53,6 +53,20 @@ function render(){
   $('status').textContent=newsLoading?`${filtered.length} muuta uutista · Uutishaku käynnissä…`:`${filtered.length} muuta uutista${lastUpdate?' · Päivitetty '+lastUpdate:''}`;
   $('grid').innerHTML=filtered.length?filtered.map(newsCard).join(''):(newsLoading?'<div class="empty">Haetaan lisää uutisia…</div>':(term||src?'<div class="empty">Hakuehdoilla ei löytynyt muita uutisia.</div>':'<div class="empty">Muita uutisia ei löytynyt.</div>'));
 }
+// Keep already verified items throughout all partial fetch phases. New snapshots
+// are incremental, not replacements: a source can finish after another source.
+function mergeNews(previous, incoming){
+  const byUrl=new Map();
+  for(const item of [...previous,...incoming]){
+    if(!item?.url||!item?.title)continue;
+    // Prefer refreshed metadata for an existing URL, without losing known dates.
+    const old=byUrl.get(item.url);
+    byUrl.set(item.url,old?{...old,...item,timestamp:Number(item.timestamp)||Number(old.timestamp)||0}:item);
+  }
+  return [...byUrl.values()]
+    .sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0))
+    .slice(0,100);
+}
 let newsRefreshing = false;
 async function load(){
   if(!selectedTeam)return;
@@ -68,13 +82,11 @@ async function load(){
     const data=await r.json();
     if(sequence!==newsFetchSequence||requestedTeam!==selectedTeam)return;
     const incoming=(data.articles||[]).sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0));
-    // Keep previously saved three visible while new sources are still loading.
-    // When the club stage completes, replace them with the latest verified set.
+    // The server may send an incomplete snapshot from one source while other
+    // sources still load. Never replace the visible newest three with that subset.
+    // Apply the same merge rule to official, media and complete responses.
     if(incoming.length){
-      if(data.phase==='official' && articles.length){
-        const combined=new Map([...articles,...incoming].filter(a=>a?.url).map(a=>[a.url,a]));
-        articles=[...combined.values()].sort((a,b)=>(Number(b.timestamp)||0)-(Number(a.timestamp)||0));
-      }else articles=incoming;
+      articles=mergeNews(articles,incoming);
       saveLatest(requestedTeam,articles);
     }
     if(data.updated && data.status!=='loading')lastUpdate=new Date(data.updated).toLocaleTimeString('fi-FI',{hour:'2-digit',minute:'2-digit'});
