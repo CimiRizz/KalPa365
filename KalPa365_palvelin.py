@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.22 — nonblocking progressive news, without discussion forum."""
+"""KalPa365 v6.23 — cleaned news text and progressive news loading."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -62,8 +62,46 @@ def child_text(node, names):
     for c in node:
         if local(c.tag) in names and c.text and c.text.strip(): return c.text.strip()
     return ''
+# Remove third-party social embeds before their HTML becomes plain article text.
+# In particular, a quoted X/Twitter embed often includes its script, a t.co URL,
+# and the attribution/date; none of those is the article's own prose.
+SOCIAL_EMBED_MARKER = re.compile(
+    r'(?:twitter-tweet|instagram-media|tiktok-embed|fb-post|facebook-post|'
+    r'platform\.(?:twitter|x)\.com/widgets\.js|www\.instagram\.com/embed|'
+    r'platform\.tiktok\.com/embed)', re.I)
+SOCIAL_EMBED_BLOCKS = re.compile(
+    r'<(?:blockquote|div|iframe)\b(?=[^>]*\b(?:twitter-tweet|instagram-media|'
+    r'tiktok-embed|fb-post|facebook-post|\b(?:twitter|instagram|tiktok)[-_]embed)\b)'
+    r'[^>]*>.*?</(?:blockquote|div|iframe)\s*>', re.I | re.S)
+SOCIAL_SCRIPT = re.compile(
+    r"<script\b[^>]*\bsrc\s*=\s*['\"]?https?://(?:platform\.(?:twitter|x)\.com/widgets\.js|platform\.tiktok\.com/[^>]*|www\.instagram\.com/[^>]*)[^>]*>\s*</script\s*>",
+    re.I | re.S)
+SOCIAL_URL_LINE = re.compile(r'^(?:https?://(?:t\.co/[\w-]+|x\.com/[^\s]+|twitter\.com/[^\s]+)|'
+                             r'@\w+\s*\|\s*#\w+)\s*$', re.I)
+
+def remove_social_markup(value):
+    value = html.unescape(str(value or ''))
+    value = SOCIAL_EMBED_BLOCKS.sub(' ', value)
+    value = SOCIAL_SCRIPT.sub(' ', value)
+    return value
+
+def clean_article_paragraphs(paragraphs):
+    cleaned = []
+    for paragraph in paragraphs:
+        text = remove_social_markup(paragraph)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = html.unescape(text)
+        # Drop standalone embed URLs, platform script references, and widget leftovers.
+        text = re.sub(r'https?://(?:t\.co/\S+|platform\.(?:twitter|x)\.com/widgets\.js\S*)', '', text, flags=re.I)
+        text = re.sub(r'\s+', ' ', text).strip()
+        if not text or SOCIAL_URL_LINE.fullmatch(text) or SOCIAL_EMBED_MARKER.search(text):
+            continue
+        cleaned.append(text)
+    return cleaned
+
 def strip_markup(value):
-    return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', value or ''))).strip()
+    value = remove_social_markup(value)
+    return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', value)).strip()
 
 def history_connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +395,7 @@ def verify_suomikiekko_candidate(candidate):
         fallback.feed(document)
         paragraphs = max(
             (list(dict.fromkeys(text_parser.paragraphs)),
-             list(dict.fromkeys(jsonld_paragraphs(text_parser.json_scripts))),
+             list(dict.fromkeys(clean_article_paragraphs(jsonld_paragraphs(text_parser.json_scripts)))),
              list(dict.fromkeys(fallback.paragraphs))),
             key=lambda parts: sum(map(len, parts)))
         headline = kalpa_headline_from_html(document)
@@ -1226,7 +1264,7 @@ class ReaderParser(HTMLParser):
         attrs=dict(attrs)
         parent=self.stack[-1] if self.stack else (False,False)
         marker=' '.join(str(attrs.get(k,'')) for k in ('class','id','role','data-testid'))
-        excluded=parent[0] or tag in ('script','style','nav','footer','aside','form','noscript','svg','iframe','button','header') or bool(re.search(r'related|recommend|advert|promo|share|caption|cookie|paywall',marker,re.I))
+        excluded=parent[0] or tag in ('script','style','nav','footer','aside','form','noscript','svg','iframe','button','header') or bool(re.search(r'related|recommend|advert|promo|share|caption|cookie|paywall|twitter-tweet|instagram-media|tiktok-embed|facebook-post|fb-post',marker,re.I))
         article=parent[1] or tag in ('article','main') or bool(re.search(r'article|story[-_ ]?body|article[-_ ]?(body|content|text)|entry-content|post-content|news-content',marker,re.I))
         if tag=='script' and attrs.get('type','').lower()=='application/ld+json': self.script_parts=[]
         if tag in ('p','h2','h3','blockquote') and article and not excluded and self.current is None:
@@ -1243,7 +1281,7 @@ class ReaderParser(HTMLParser):
         if self.current is not None and tag==self.current['tag']:
             value=' '.join(''.join(self.current['parts']).split())
             if len(value)>35 and not re.match(r'^(?:Lue myös|Katso myös|Kuva:|Mainos|Suosittelemme|Jaa artikkeli)',value,re.I):
-                self.paragraphs.append(value)
+                self.paragraphs.extend(clean_article_paragraphs([value]))
             self.current=None
         for i in range(len(self.stack)-1,-1,-1):
             if self.stack[i][2]==tag:
@@ -1267,7 +1305,7 @@ def jsonld_paragraphs(scripts):
         except (ValueError,TypeError): pass
     if not bodies: return []
     body=max(bodies,key=len)
-    return [x.strip() for x in re.split(r'\n\s*\n',html.unescape(body)) if len(x.strip())>35]
+    return clean_article_paragraphs([x.strip() for x in re.split(r'\n\s*\n', body) if len(x.strip())>35])
 
 BUILDER_API_KEY = 'f11503eeae084753968caac3899a5d78'  # Public, read-only Builder.io key.
 BUILDER_MODEL = 'news-article-v-1'
@@ -1314,8 +1352,8 @@ def fetch_liiga_article(original):
         body = data.get('searchText')
         if not isinstance(body, str) or len(body.strip()) < 60:
             continue
-        paragraphs = [html.unescape(chunk.strip()) for chunk in re.split(r'\n\s*\n', body)
-                      if chunk.strip()]
+        paragraphs = clean_article_paragraphs([chunk.strip() for chunk in re.split(r'\n\s*\n', body)
+                      if chunk.strip()])
         return {'status': 'full', 'paragraphs': paragraphs[:100],
                 'original_url': original, 'extraction': 'builder.io',
                 'title': strip_markup(str(data.get('articleTitle') or item.get('name') or ''))}
@@ -1343,8 +1381,8 @@ def article_for(original, verify_only=False):
     if PAYWALL_HINTS.search(decoded):
         return {'status':'summary','paragraphs':[], 'original_url':original, 'message':'Artikkeli vaatii tilauksen.'}
     parser=ReaderParser(); parser.feed(decoded)
-    visible=list(dict.fromkeys(parser.paragraphs))
-    structured=list(dict.fromkeys(jsonld_paragraphs(parser.json_scripts)))
+    visible=list(dict.fromkeys(clean_article_paragraphs(parser.paragraphs)))
+    structured=list(dict.fromkeys(clean_article_paragraphs(jsonld_paragraphs(parser.json_scripts))))
     paragraphs=max((visible,structured),key=lambda ps:sum(map(len,ps)))
     min_chars = 450
     min_paras = 2

@@ -1,17 +1,23 @@
-# KalPa365 v6.22 – vaiheittainen uutishaku, koodisiivous
+# KalPa365 v6.23 – uutistekstien siivous
+
+Pohjana toimiva KalPa365 v6.22.
+
+## Muutos
+- Poistaa X/Twitterin, Instagramin, TikTokin ja vastaavien sosiaalisten upotusten HTML-lohkot ja upotusskriptit uutisten teksteistä ennen niiden näyttämistä.
+- Siivoaa uutistiivistelmät, tavallisen HTML-artikkelilukutilan, JSON-LD-tekstin ja Liigan Builder.io-lukutekstin.
+- Säilyttää uutisartikkelin varsinaiset tekstikappaleet ja linkin alkuperäiseen artikkeliin.
+- Ei muuta uutishaun toimintatapaa eikä hyväksyttyä käyttöliittymän ulkoasua.
 
 ## Asennus
-Korvaa GitHubissa `KalPa365_palvelin.py` ja `index.html` tästä paketista. Säilytä nykyiset `ottelut.json`, logot, `render.yaml`, `render-build.sh` ja muut julkaisuasetukset ennallaan. GitHubiin ei tarvitse lisätä ZIP-pakettia.
+1. Ota talteen toimivan v6.22:n varmuuskopio.
+2. Korvaa GitHubissa **vain** `KalPa365_palvelin.py` tällä versiolla.
+3. Render julkaisee päivitetyn palvelimen. Käynnistä sivu uudelleen Ctrl+F5 tarvittaessa.
 
-## Muutokset
-- `/api/news` vastaa heti. Jos uutiset löytyvät paikallisesta historian välimuistista, ne tulevat näkyviin välittömästi; ellei välimuistia ole, sivu näyttää lataustilan.
-- Uutislähteet haetaan rinnakkain, ja ensimmäiset päivätyt, tarkistetut uutiset julkaistaan vaiheittain. Selain tarkistaa tilanteen 2,5 sekunnin välein aktiivisen haun aikana.
-- Haun lopuksi suoritetaan olemassa oleva päivämäärien, otsikoiden, kaksoiskappaleiden ja julkisesti luettavien linkkien tarkistus.
-- Jatkoajan keskustelun kerääjä, viestien tallennusrajapinnat ja niiden PostgreSQL-riippuvuus poistettu palvelinkoodista. Muutokset eivät poista olemassa olevaa Render-tietokantaa automaattisesti.
-- Käyttöliittymän HTML-rakenne ja CSS jätetty ennalleen (lukittu ulkoasu).
+`index.html` on mukana vertailua varten, mutta sen sisältö on muuttumaton v6.22:een nähden.
 
-## Rajapintatarkistus
-`/api/news` palauttaa `refreshing: true` kesken haun ja `partial: true`, kun näkyvissä on vaiheittainen tulos. Lopuksi `refreshing: false`, `partial: false`. `updated` kertoo snapshotin päivitysajan, ei välttämättä uusimman uutisen julkaisuaikaa.
+## Testattu
+- Python-syntaksi
+- X/Twitterin HTML-upotuksen ja skriptin poisto
+- Muiden tekstikappaleiden säilyminen
 
-## Huomio
-Renderin ilmaisessa ympäristössä tiedostopohjainen uutishistoria ei ole pysyvä uudelleenkäynnistysten yli. Tällöin ensimmäiset uutiset tulevat näkyviin vasta ensimmäisten onnistuneiden lähdehakujen jälkeen. PostgreSQL:n aiempia keskusteluviestejä ei enää käytetä.
+Julkaistun Render-ympäristön ajonaikaista testausta ei ole tehty.
