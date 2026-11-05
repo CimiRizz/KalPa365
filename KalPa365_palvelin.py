@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.23 — cleaned news text and progressive news loading."""
+"""KalPa365 v6.24 — reliable KalPa season-news discovery."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -266,7 +266,10 @@ def fetch_liiga():
 # Direct publisher category/team pages. Only public links present in HTML are used.
 # A 403 response is recorded and never bypassed.
 DIRECT_PAGES = {
-    'KalPa.fi': ['https://kalpa.fi/'],
+    'KalPa.fi': [
+        'https://kalpa.fi/fi-fi/cg/2026-2027/60/',
+        'https://kalpa.fi/',
+    ],
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
     'Kiekkouutiset': ['https://kiekkouutiset.fi/?s=KalPa', 'https://kiekkouutiset.fi/liiga/'],
     'MTV Uutiset': [
@@ -1135,12 +1138,10 @@ def _build_news():
                     _publish_progress(items, sources, started)
                 except Exception as exc:
                     print('Progressive news snapshot skipped:', type(exc).__name__, flush=True)
-    # Preserve RSS diagnostics if the same source also has direct pages,
-    # regardless of scheduling order.
-    for kind, source, found, info in outcomes:
-        if kind == 'direct':
-            sources[source]['direct_pages'] = info
-    
+    # All source results are already merged as futures complete.  A removed
+    # 'outcomes' variable here previously caused NameError at the end of a
+    # refresh, leaving only provisional results visible.
+
     seen=set(); unique=[]
     for item in sorted(items,key=lambda x:x['timestamp'],reverse=True):
         key=item['url'].split('?')[0].rstrip('/')
