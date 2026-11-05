@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.8 — only verified productive news sources enabled."""
+"""KalPa365 v6.22 — nonblocking progressive news, without discussion forum."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 import xml.etree.ElementTree as ET
 import json, os, re, time, threading, pathlib, html, sqlite3, unicodedata
 from difflib import SequenceMatcher
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -21,7 +21,6 @@ CACHE = {'at': 0, 'data': None, 'refreshing': False}
 # Only one refresh is allowed even if multiple browsers request news at once.
 REFRESH_LOCK = threading.Lock()
 SOURCE_WORKERS = 8
-STALE_MAX_AGE = 3600  # After one hour, require a fresh response instead of serving old data.
 FREE_CACHE = {}
 FREE_CACHE_LOCK = threading.Lock()
 FEEDS = {
@@ -51,7 +50,6 @@ ALLOWED_PUBLISHERS = (
     'kalpa.fi',
     'suomikiekko.com',
     'kiekkouutiset.fi',
-    'jatkoaika.com',
 )
 
 def allowed_publisher(url):
@@ -83,7 +81,7 @@ def history_merge(fresh):
                 db.execute('INSERT INTO articles(url,payload,timestamp,seen) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET payload=excluded.payload, timestamp=excluded.timestamp, seen=excluded.seen', (a['url'], json.dumps(a, ensure_ascii=False), a['timestamp'], now))
             db.execute('DELETE FROM articles WHERE seen < ?', (now - HISTORY_DAYS * 86400,))
             # Retire removed publishers from stored history too.
-            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('IS', 'IL', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
+            db.execute("DELETE FROM articles WHERE json_extract(payload, '$.source') IN ('IS', 'IL', 'Savon Sanomat', 'Jatkoaika', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi')")
             rows = db.execute('SELECT payload FROM articles ORDER BY timestamp DESC LIMIT 500').fetchall()
         return [json.loads(row[0]) for row in rows], 'ok'
     except (OSError, sqlite3.Error) as exc:
@@ -257,9 +255,7 @@ class DirectLinkParser(HTMLParser):
         href = attrs.get('href', '')
         link = urljoin(self.base, href)
         path = urlparse(link).path
-        if self.source == 'Jatkoaika':
-            valid_path = path.startswith('/Uutiset/') or path.startswith('/LIIGA/')
-        elif self.source == 'MTV Uutiset':
+        if self.source == 'MTV Uutiset':
             valid_path = bool(re.fullmatch(r'/artikkeli/[^/?#]+/\d{6,10}/?', path, re.I))
         elif self.source == 'KalPa.fi':
             valid_path = bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', path))
@@ -1015,72 +1011,6 @@ def resolve_article_publication(item):
         item['published']=datetime.fromtimestamp(stamp,timezone.utc).isoformat()
     return item
 
-def fetch_mtv_sitemap():
-    """Find MTV's own recent KalPa article URLs without Google News.
-
-    Sitemap lastmod is used only to prioritize discovery, never as the
-    original publication date. Each article still passes the existing date
-    and full-public-text verification stages.
-    """
-    base = 'https://www.mtvuutiset.fi/sitemap.xml'
-    diagnostics = {'status': 'ok', 'sitemap': base, 'sitemaps_checked': 0,
-                   'urls_scanned': 0, 'matching_urls': 0, 'count': 0}
-    found, seen = [], set()
-    def read_xml(url):
-        req = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; KalPa365/6.0)',
-                                   'Accept': 'application/xml,text/xml,*/*'})
-        with urlopen(req, timeout=7) as response:
-            if not allowed_publisher(response.geturl()):
-                raise ValueError('Sitemap redirected outside publisher')
-            raw = response.read(4_000_001)
-            if len(raw) > 4_000_000: raise ValueError('Sitemap too large')
-        import gzip
-        if raw[:2] == b'\x1f\x8b': raw = gzip.decompress(raw)
-        return ET.fromstring(raw)
-    try:
-        root = read_xml(base)
-        # A sitemap index may contain many years of archives. Prefer URLs
-        # labelled recently modified and cap the network load to four maps.
-        entries = []
-        if local(root.tag) == 'sitemapindex':
-            for node in root:
-                loc = child_text(node, {'loc'})
-                modified = child_text(node, {'lastmod'})
-                if loc.startswith('https://www.mtvuutiset.fi/') and loc.endswith(('.xml', '.xml.gz')):
-                    entries.append((modified, loc))
-            entries.sort(reverse=True)
-            targets = [u for _, u in entries[:4]]
-        else:
-            targets = [base]
-        for url in targets:
-            try:
-                doc = root if url == base else read_xml(url)
-                diagnostics['sitemaps_checked'] += 1
-                for node in doc.iter():
-                    if local(node.tag) != 'url': continue
-                    link = child_text(node, {'loc'}).split('#')[0]
-                    diagnostics['urls_scanned'] += 1
-                    if not allowed_publisher(link): continue
-                    path = urlparse(link).path
-                    if not re.fullmatch(r'/artikkeli/[^/?#]+/\d{6,10}/?', path, re.I): continue
-                    if not re.search(r'kalpa(?:n|lle|ssa|sta|lta)?(?:-|/|$)', unquote(path), re.I): continue
-                    if link in seen: continue
-                    seen.add(link)
-                    found.append({'title': 'MTV Uutiset – KalPa', 'source': 'MTV Uutiset',
-                                  'url': link, 'summary': '', 'timestamp': 0, 'published': ''})
-                    if len(found) >= 80: break
-            except Exception as exc:
-                diagnostics.setdefault('page_errors', []).append(f'{type(exc).__name__}: {str(exc)[:90]}')
-            if len(found) >= 80: break
-        diagnostics['matching_urls'] = len(found)
-        diagnostics['count'] = len(found)
-        if diagnostics['sitemaps_checked'] == 0: diagnostics['status'] = 'error'
-    except Exception as exc:
-        diagnostics['status'] = 'error'
-        diagnostics['message'] = f'{type(exc).__name__}: {str(exc)[:130]}'
-    return found, diagnostics
-
-
 def resolve_mtv_headline(item):
     if item.get('source') != 'MTV Uutiset' or item.get('title') != 'MTV Uutiset – KalPa':
         return item
@@ -1098,89 +1028,6 @@ def resolve_mtv_headline(item):
     return item
 
 
-# v6.9: experimental independent browser reader. A real Chromium installation is
-# required in Render. We do not solve CAPTCHAs, rotate IPs, or ignore 403s.
-JATKOAIKA_BROWSER_ENABLED = os.getenv('JATKOAIKA_BROWSER', '1').strip().lower() in ('1', 'yes', 'true')
-JATKOAIKA_TEAM_URL = 'https://www.jatkoaika.com/Joukkue/KalPa'
-
-def fetch_jatkoaika_browser():
-    info = {'status': 'disabled', 'count': 0, 'scanned': 0,
-            'page': JATKOAIKA_TEAM_URL, 'mode': 'playwright_chromium'}
-    if not JATKOAIKA_BROWSER_ENABLED:
-        return [], info
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        info.update(status='dependency_missing', message='Install playwright and Chromium as in README')
-        return [], info
-    # Use bundled Chromium in the deployed Python environment, not build-cache HOME.
-    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
-    results = []
-    try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True, args=['--no-sandbox'])
-            try:
-                page = browser.new_page(locale='fi-FI', user_agent=(
-                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-                    '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'))
-                response = page.goto(JATKOAIKA_TEAM_URL, wait_until='domcontentloaded', timeout=15000)
-                code = response.status if response else None
-                info['http_status'] = code
-                if code in (401, 403, 429):
-                    info.update(status='blocked', message=f'Publisher HTTP {code}; no bypass attempted')
-                    return [], info
-                if code != 200:
-                    info.update(status='error', message=f'Unexpected HTTP {code}')
-                    return [], info
-                markup = page.content()
-                if re.search(r'captcha|verify you are human|cloudflare challenge', markup[:15000], re.I):
-                    info.update(status='blocked', message='Human verification detected; no bypass attempted')
-                    return [], info
-                parser = DirectLinkParser('Jatkoaika', JATKOAIKA_TEAM_URL)
-                parser.feed(markup)
-                info['scanned'] = len(parser.links)
-                links = list(dict((url, title) for title, url in parser.links).items())
-                info['article_links'] = len(links)
-                # Only inspect a small number; do not crawl aggressively.
-                for link, title in links[:12]:
-                    try:
-                        if not POSITIVE.search(title + ' ' + unquote(urlparse(link).path)):
-                            continue
-                        resp = page.goto(link, wait_until='domcontentloaded', timeout=10000)
-                        if not resp or resp.status != 200:
-                            continue
-                        body = page.content()
-                        if PAYWALL_HINTS.search(body):
-                            continue
-                        stamp = publication_date_from_html(body, 'www.jatkoaika.com')
-                        if not stamp or not (time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400):
-                            continue
-                        reader = ReaderParser(); reader.feed(body)
-                        visible = list(dict.fromkeys(reader.paragraphs))
-                        structured = list(dict.fromkeys(jsonld_paragraphs(reader.json_scripts)))
-                        paragraphs = max((visible, structured), key=lambda parts:sum(map(len,parts)))
-                        if len(paragraphs) < 2 or sum(map(len,paragraphs)) < 450:
-                            continue
-                        title = strip_markup(title)
-                        item = {'title':title, 'source':'Jatkoaika', 'url':link,
-                                'summary':'', 'timestamp':stamp,
-                                'published':datetime.fromtimestamp(stamp,timezone.utc).isoformat()}
-                        results.append(item)
-                        # Same verified public browser response; subsequent urllib call
-                        # is not necessary and may be HTTP 403.
-                        with FREE_CACHE_LOCK:
-                            FREE_CACHE[link] = (time.time(), True)
-                    except Exception:
-                        continue
-                info.update(status='ok', count=len(results),
-                            sample_titles=[r['title'][:110] for r in results[:4]])
-            finally:
-                browser.close()
-    except Exception as exc:
-        info.update(status='error', message=f'{type(exc).__name__}: {str(exc)[:240]}')
-    return results, info
-
-
 def _timed_source(kind, source, targets=None):
     """Independent publisher fetch; failures do not cancel other publishers."""
     started = time.monotonic()
@@ -1189,10 +1036,6 @@ def _timed_source(kind, source, targets=None):
             articles, info = fetch(source, targets)
         elif kind == 'direct':
             articles, info = fetch_direct(source, targets)
-        elif kind == 'mtv_sitemap':
-            articles, info = fetch_mtv_sitemap()
-        elif kind == 'jatkoaika_browser':
-            articles, info = fetch_jatkoaika_browser()
         else:
             articles, info = fetch_liiga_news()
     except Exception as exc:
@@ -1202,26 +1045,58 @@ def _timed_source(kind, source, targets=None):
     return kind, source, articles, info
 
 
+def _publish_progress(items, sources, started):
+    """Publish dated, verified partial results; never replace verified results with placeholders."""
+    cutoff = time.time() - HISTORY_DAYS * 86400
+    candidates = [a for a in items if cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400
+                  and allowed_publisher(str(a.get('url') or ''))
+                  and (a.get('source') != 'KalPa.fi' or valid_kalpa_headline(a.get('title')))]
+    unique = list({a['url']: a for a in sorted(candidates, key=lambda x: float(x['timestamp']))}.values())
+    unique.sort(key=lambda x: float(x['timestamp']), reverse=True)
+    # Avoid huge page-verification loops during progressive updates.
+    recent = unique[:12]
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        verified = list(executor.map(is_verified_free, recent))
+    visible = [a for a, ok in zip(recent, verified) if ok]
+    with LOCK:
+        old = CACHE.get('data') or {}
+        old_articles = old.get('articles') or []
+        merged = remove_duplicate_articles(visible + old_articles)
+        merged = [a for a in merged if cutoff <= float(a.get('timestamp') or 0) <= time.time() + 86400
+                  and allowed_publisher(str(a.get('url') or ''))]
+        merged.sort(key=lambda x: float(x.get('timestamp') or 0), reverse=True)
+        CACHE['data'] = {
+            'articles': merged[:150], 'sources': dict(sources),
+            'source_counts': {name: sum(a.get('source') == name for a in merged) for name in sources},
+            'status': 'ok' if merged else 'loading', 'errors': [],
+            'updated': datetime.now(timezone.utc).isoformat(),
+            'refreshing': True, 'partial': True,
+            'build_duration_ms': round((time.monotonic() - started) * 1000),
+        }
+
+
 def _build_news():
-    """Build a complete snapshot; keep the previous one until it succeeds."""
+    """Collect publishers concurrently; release validated partial snapshots as they finish."""
     started = time.monotonic()
-    items=[]; sources={}
+    items = []
+    sources = {}
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
-            + [('liiga', 'Liiga.fi', None)]
-            )  # v6.1: MTV team page replaces low-yield sitemap scan
-    # Publisher fetches are independent network-bound tasks. Limit global
-    # parallelism; each fetch retains its original per-request timeouts.
+            + [('liiga', 'Liiga.fi', None)])
     with ThreadPoolExecutor(max_workers=SOURCE_WORKERS) as pool:
-        outcomes = list(pool.map(lambda job: _timed_source(*job), work))
-    for kind, source, found, info in outcomes:
-        items.extend(found)
-        if kind == 'direct':
-            sources.setdefault(source, {})['direct_pages'] = info
-        elif kind == 'mtv_sitemap':
-            sources.setdefault(source, {})['sitemap'] = info
-        else:
-            sources[source] = info
+        futures = [pool.submit(_timed_source, *job) for job in work]
+        for future in as_completed(futures):
+            kind, source, found, info = future.result()
+            items.extend(found)
+            if kind == 'direct':
+                sources.setdefault(source, {})['direct_pages'] = info
+            else:
+                sources.setdefault(source, {}).update(info)
+            if found:
+                try:
+                    _publish_progress(items, sources, started)
+                except Exception as exc:
+                    print('Progressive news snapshot skipped:', type(exc).__name__, flush=True)
     # Preserve RSS diagnostics if the same source also has direct pages,
     # regardless of scheduling order.
     for kind, source, found, info in outcomes:
@@ -1241,7 +1116,7 @@ def _build_news():
         resolved_by_url={a['url']:a for a in resolved}
         unique=[resolved_by_url.get(a['url'],a) for a in unique]
     historical,history_status=history_merge(unique)
-    historical=[a for a in historical if a.get('source') not in ('IS', 'IL', 'Savon Sanomat', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
+    historical=[a for a in historical if a.get('source') not in ('IS', 'IL', 'Savon Sanomat', 'Jatkoaika', 'Keskisuomalainen', 'Etelä-Suomen Sanomat', 'Karjalainen', 'Kaleva', 'Pallomeri.net', 'Kiekkoareena', 'UrheiluSuomi') and allowed_publisher(str(a.get('url') or ''))]
     # A direct HTML index has no reliable publication timestamp (timestamp=0).
     # Never present such an article as current; publisher-search/RSS articles
     # with a real timestamp remain eligible. This also cleans persisted history.
@@ -1295,46 +1170,51 @@ def _refresh_snapshot():
     try:
         result = _build_news()
         with LOCK:
+            result['partial'] = False
             CACHE['data'] = result
             CACHE['at'] = time.time()
     except Exception as exc:
         print(f'KalPa365 refresh failed: {type(exc).__name__}: {exc}', flush=True)
+        with LOCK:
+            CACHE['at'] = time.time()
     finally:
         with LOCK:
             CACHE['refreshing'] = False
         REFRESH_LOCK.release()
 
 
+def _stored_news_snapshot():
+    """Read local historical articles immediately if they exist (best-effort cache)."""
+    try:
+        with history_connect() as db:
+            rows = db.execute('SELECT payload FROM articles WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 150',
+                              (time.time() - HISTORY_DAYS * 86400,)).fetchall()
+        articles = [json.loads(row[0]) for row in rows]
+        articles = [a for a in articles if allowed_publisher(str(a.get('url') or ''))
+                    and float(a.get('timestamp') or 0) > 0]
+        return articles
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return []
+
+
 def news():
+    """Always answer immediately; refresh concurrently and expose intermediate results."""
     now = time.time()
     with LOCK:
-        previous = CACHE['data']
+        if CACHE['data'] is None:
+            stored = _stored_news_snapshot()
+            CACHE['data'] = {'articles': stored, 'sources': {}, 'source_counts': {},
+                             'status': 'ok' if stored else 'loading', 'errors': [],
+                             'updated': datetime.now(timezone.utc).isoformat(),
+                             'partial': True}
         age = now - CACHE['at']
-        if previous is not None and age < TTL:
-            return previous
-        # Return stale results instantly while a single background refresh
-        # runs. This path has no unbounded thread creation.
-        if previous is not None and age < STALE_MAX_AGE:
-            if not CACHE['refreshing'] and REFRESH_LOCK.acquire(blocking=False):
-                CACHE['refreshing'] = True
-                threading.Thread(target=_refresh_snapshot, daemon=True,
-                                 name='KalPa365-news-refresh').start()
-            return {**previous, 'stale': True, 'refreshing': CACHE['refreshing']}
-
-    # Cold start or excessively stale snapshot: only one caller fetches;
-    # concurrent callers wait for the same refresh instead of duplicating it.
-    if REFRESH_LOCK.acquire(blocking=False):
-        with LOCK:
+        if age >= TTL and not CACHE['refreshing'] and REFRESH_LOCK.acquire(blocking=False):
             CACHE['refreshing'] = True
-        _refresh_snapshot()
-    else:
-        with REFRESH_LOCK:
-            pass
-    with LOCK:
-        if CACHE['data'] is not None:
-            return CACHE['data']
-    return {'articles': [], 'sources': {}, 'source_counts': {}, 'status': 'error',
-            'errors': ['Initial news refresh failed'], 'updated': datetime.now(timezone.utc).isoformat()}
+            threading.Thread(target=_refresh_snapshot, daemon=True,
+                             name='KalPa365-news-refresh').start()
+        data = dict(CACHE['data'])
+        data['refreshing'] = CACHE['refreshing']
+        return data
 
 class ReaderParser(HTMLParser):
     """Collect public article paragraphs and JSON-LD NewsArticle content."""
@@ -1478,157 +1358,7 @@ def article_for(original, verify_only=False):
 TEAM_LOGO_FILES = frozenset({'kiekko-espoo.jpg', 'jukurit.jpg', 'jyp.jpg', 'sport.jpg', 'ilves.jpg', 'saipa.jpg', 'assat.jpg', 'karpat.jpg', 'tps.jpg', 'hpk.jpg', 'kookoo.jpg', 'pelicans.jpg', 'hifk.jpg', 'kalpa.jpg', 'tappara.jpg', 'lukko.jpg', 'jokerit.jpg'})
 
 
-# v6.10 — KalPa discussion messages, a separate endpoint, not news articles.
-FORUM_URL = 'https://keskustelu.jatkoaika.com/forums/kalpa.161/'
-FORUM_LOCK = threading.Lock()
-FORUM_CACHE = {'at': 0, 'data': None}
-
-def fetch_kalpa_forum():
-    """Read publisher's public RSS for the 3 most recently active KalPa THREADS.
-
-    RSS content:encoded contains the ORIGINAL post, not the last reply. Deliberately
-    don't publish it as the most recent message. 403 is treated as a block.
-    """
-    import xml.etree.ElementTree as ET
-    from email.utils import parsedate_to_datetime
-    from urllib.error import HTTPError
-    from datetime import timezone
-
-    rss_url = FORUM_URL.rstrip('/') + '/index.rss'
-    result = {'status': 'empty', 'messages': [], 'source': rss_url,
-              'mode': 'rss_threads', 'kind': 'recently_updated_threads'}
-    try:
-        req = Request(rss_url, headers={
-            'User-Agent': 'KalPa365/6.11 (public RSS feed reader)',
-            'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9'
-        })
-        with urlopen(req, timeout=12) as response:
-            target = response.geturl()
-            if urlparse(target).hostname != 'keskustelu.jatkoaika.com':
-                raise ValueError('Unexpected forum RSS redirect')
-            if response.status != 200:
-                raise ValueError('RSS returned HTTP '+str(response.status))
-            payload = response.read(550_000)
-        root = ET.fromstring(payload)
-        entries = root.findall('./channel/item')
-        result['items_scanned'] = len(entries)
-        seen = set()
-        for item in entries:
-            title = (item.findtext('title') or '').strip()
-            link = (item.findtext('link') or '').strip()
-            if not title or not link or urlparse(link).hostname != 'keskustelu.jatkoaika.com':
-                continue
-            if '/threads/' not in urlparse(link).path or link in seen:
-                continue
-            seen.add(link)
-            try:
-                dt = parsedate_to_datetime(item.findtext('pubDate') or '')
-                if not dt.tzinfo: dt = dt.replace(tzinfo=timezone.utc)
-                stamp = int(dt.timestamp())
-            except (TypeError, ValueError, OverflowError):
-                continue
-            creator = item.findtext('{http://purl.org/dc/elements/1.1/}creator') or ''
-            result['messages'].append({
-                'topic': title, 'author': '', 'excerpt': '', 'url': link,
-                'timestamp': stamp, 'kind': 'thread', 'creator_of_original_post': creator
-            })
-        result['messages'].sort(key=lambda m: m['timestamp'],reverse=True)
-        result['messages'] = result['messages'][:3]
-        result['status'] = 'ok' if result['messages'] else 'empty'
-        if not result['messages']:
-            result['message'] = 'RSS returned no dated KalPa threads'
-    except HTTPError as e:
-        result.update(status='blocked' if e.code in (401,403,429) else 'error',
-                      http_status=e.code, message='Forum RSS HTTP '+str(e.code))
-    except (ET.ParseError, OSError, ValueError, TimeoutError) as e:
-        result.update(status='error',message=f'{type(e).__name__}: {str(e)[:160]}')
-    return result
-
-def forum_messages():
-    now=time.time()
-    with FORUM_LOCK:
-        if FORUM_CACHE['data'] is not None and now-FORUM_CACHE['at']<300:
-            return FORUM_CACHE['data']
-    data=fetch_kalpa_forum()
-    with FORUM_LOCK:
-        FORUM_CACHE.update(at=time.time(),data=data)
-    return data
-
-# Paikallisen kerääjän tuottamat yksittäiset viestit (ei RSS-ketjuja).
-# Renderin muisti ei ole pysyvä; kerääjä lähettää tiedot jokaisella ajokerralla.
-import os
-LATEST_FORUM_POSTS = {'updated_at': None, 'messages': []}
-LATEST_FORUM_LOCK = threading.Lock()
-# PostgreSQL-backed storage; Render's ephemeral filesystem and process memory are not durable.
-# Use DATABASE_URL from a Render Postgres instance. The table is initialized automatically.
-FORUM_DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
-
-def forum_db_connection():
-    import psycopg
-    return psycopg.connect(FORUM_DATABASE_URL, connect_timeout=8)
-
-def forum_db_init(conn):
-    conn.execute("""CREATE TABLE IF NOT EXISTS kalpa_forum_latest (
-        id smallint PRIMARY KEY CHECK (id = 1),
-        updated_at double precision NOT NULL,
-        messages jsonb NOT NULL
-    )""")
-
-def forum_store(payload):
-    if not FORUM_DATABASE_URL:
-        raise RuntimeError('DATABASE_URL puuttuu: pysyva tallennus ei ole kaytossa')
-    with forum_db_connection() as conn:
-        forum_db_init(conn)
-        conn.execute("""INSERT INTO kalpa_forum_latest(id, updated_at, messages)
-            VALUES (1, %s, %s::jsonb)
-            ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,
-            messages=excluded.messages""", (payload['updated_at'], json.dumps(payload['messages'],ensure_ascii=False)))
-
-def forum_load():
-    if not FORUM_DATABASE_URL:
-        return {'updated_at': None, 'messages': [], 'storage_status': 'database_not_configured'}
-    with forum_db_connection() as conn:
-        forum_db_init(conn)
-        row = conn.execute('SELECT updated_at, messages FROM kalpa_forum_latest WHERE id=1').fetchone()
-    if row is None:
-        return {'updated_at': None, 'messages': [], 'storage_status': 'empty'}
-    return {'updated_at': row[0], 'messages': row[1], 'storage_status': 'persistent'}
-
 class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        if urlparse(self.path).path != '/api/forum-posts':
-            self.send_error(404); return
-        import hmac
-        token = os.environ.get('KALPA_FORUM_TOKEN', '')
-        supplied = self.headers.get('X-Kalpa-Token', '')
-        if not token or not hmac.compare_digest(token, supplied):
-            self.send_error(403); return
-        try:
-            length = int(self.headers.get('Content-Length', '0'))
-            if length < 2 or length > 65536: raise ValueError('Väärä koko')
-            raw = json.loads(self.rfile.read(length))
-            items = raw.get('messages', [])
-            if not isinstance(items, list) or len(items)>3: raise ValueError('Liikaa viestejä')
-            clean=[]
-            for m in items:
-                url=str(m.get('url',''))
-                if not re.match(r'^https://keskustelu\.jatkoaika\.com/(?:threads|posts)/',url):
-                    raise ValueError('Virheellinen URL')
-                clean.append({'topic':str(m.get('topic',''))[:250],
-                              'content':str(m.get('content',''))[:3000],
-                              'timestamp':int(m.get('timestamp',0)), 'url':url})
-            clean.sort(key=lambda a:a['timestamp'],reverse=True)
-            # Do not confirm a successful upload unless the database transaction committed.
-            forum_store({'updated_at': time.time(), 'messages': clean})
-            response=b'{"ok":true}'
-            self.send_response(200); self.send_header('Content-Type','application/json');
-            self.send_header('Content-Length',str(len(response))); self.end_headers(); self.wfile.write(response)
-        except (ValueError,TypeError,KeyError,OverflowError, json.JSONDecodeError) as exc:
-            self.send_error(400,str(exc))
-        except Exception as exc:
-            print('Forum PostgreSQL storage error:', type(exc).__name__, str(exc)[:180], flush=True)
-            self.send_error(503, 'Forum database unavailable; check DATABASE_URL and Render logs')
-
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
             self.send_response(200); self.send_header('Content-Length','0'); self.end_headers()
@@ -1638,17 +1368,6 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
-        elif path == '/api/forum-posts':
-            try:
-                payload=json.dumps(forum_load(),ensure_ascii=False).encode('utf-8')
-            except Exception as exc:
-                print('Forum PostgreSQL read error:', type(exc).__name__, str(exc)[:180], flush=True)
-                self.send_error(503, 'Forum database unavailable; check DATABASE_URL and Render logs')
-                return
-            mime='application/json; charset=utf-8'
-        elif path == '/api/forum':
-            payload=json.dumps(forum_messages(),ensure_ascii=False).encode('utf-8')
-            mime='application/json; charset=utf-8'
         elif path == '/api/news':
             payload = json.dumps(news(), ensure_ascii=False).encode('utf-8')
             mime = 'application/json; charset=utf-8'
