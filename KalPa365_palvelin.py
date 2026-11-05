@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liiga365 v0.3 — direct publisher news and shared Liiga fixtures."""
+"""Liiga365 v0.5 — official club news compatibility improvements."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -988,7 +988,13 @@ def publication_date_from_html(raw, source_host=''):
     for value in structured_published(parser.scripts) + parser.metadata + parser.time_values:
         stamp = parse_publication_date(value)
         if stamp: return stamp
-    if source_host in ('kalpa.fi', 'www.kalpa.fi', 'api.kalpa.fi'):
+    if source_host in ('kalpa.fi', 'www.kalpa.fi', 'api.kalpa.fi',
+                       'pelicans.fi', 'www.pelicans.fi',
+                       'tappara.fi', 'www.tappara.fi',
+                       'hc.tps.fi', 'www.hc.tps.fi'):
+        # WiseNetwork club articles often display the date above H1 without
+        # machine-readable publication metadata. Only accept a date right
+        # beside H1; never use a fixture or footer date as publication date.
         header = KalpaHeadingDateParser(); header.feed(raw)
         stamp = header.nearest_date()
         if stamp: return stamp
@@ -1840,11 +1846,11 @@ OFFICIAL_CLUBS = {
     'kookoo': ('kookoo.fi', ['https://kookoo.fi/', 'https://kookoo.fi/uutiset/']),
     'karpat': ('karpat.fi', ['https://karpat.fi/', 'https://karpat.fi/uutiset/']),
     'lukko': ('raumanlukko.fi', ['https://raumanlukko.fi/', 'https://raumanlukko.fi/uutiset/']),
-    'pelicans': ('pelicans.fi', ['https://pelicans.fi/', 'https://pelicans.fi/uutiset/']),
+    'pelicans': ('pelicans.fi', ['https://pelicans.fi/fi-fi/', 'https://pelicans.fi/fi-fi/cg/uutinen/1/', 'https://pelicans.fi/']),
     'saipa': ('saipa.fi', ['https://saipa.fi/', 'https://saipa.fi/uutiset/']),
     'sport': ('vaasansport.fi', ['https://vaasansport.fi/', 'https://vaasansport.fi/uutiset/']),
-    'tappara': ('tappara.fi', ['https://www.tappara.fi/', 'https://www.tappara.fi/uutiset/']),
-    'tps': ('hc.tps.fi', ['https://hc.tps.fi/', 'https://hc.tps.fi/uutiset/']),
+    'tappara': ('tappara.fi', ['https://www.tappara.fi/fi-fi/cg/uutiset/1/', 'https://www.tappara.fi/fi-fi/', 'https://www.tappara.fi/']),
+    'tps': ('hc.tps.fi', ['https://hc.tps.fi/fi-fi/cg/uutiset/1/', 'https://hc.tps.fi/fi-fi/', 'https://hc.tps.fi/']),
     'assat': ('assat.com', ['https://assat.com/', 'https://assat.com/uutiset/']),
 }
 assert set(OFFICIAL_CLUBS) == set(TEAMS)
@@ -1887,9 +1893,13 @@ class ClubNewsLinkParser(HTMLParser):
             blocked = ('/ottelut','/joukkue','/pelaajat','/liput','/kauppa','/yhteystiedot',
                        '/kumppanit','/tietoa','/seura','/kalenteri','/season','/schedule',
                        '/category','/tag','/page','/feed')
-            if (len(title) >= 15 and len(title) <= 230 and path.count('/') >= 1
-                and path not in ('/uutiset','/news','/ajankohtaista')
-                and not any(path == t or path.startswith(t+'/') for t in blocked)
+            # WiseNetwork lists use /fi-fi/article/{category}/{slug}/{id}/.
+            # Prefer actual articles over generic links from navigation/cards.
+            wise_article=bool(re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$',path))
+            if ((wise_article or (len(title) >= 15 and path.count('/') >= 1
+                 and path not in ('/uutiset','/news','/ajankohtaista')
+                 and not any(path == t or path.startswith(t+'/') for t in blocked)))
+                and len(title) <= 230
                 and not re.search(r'\.(?:pdf|png|jpeg|jpg|svg|webp|xml)$',path)):
                 self.links.append((title,url))
             self.anchor, self.depth = None, 0
@@ -1968,7 +1978,13 @@ def _refresh_official_club(team):
             except (ValueError,OSError,TimeoutError) as exc:
                 diagnostics.append({'url':url,'status':'error','message':type(exc).__name__})
         previously={row['url'] for row in rows}
-        to_check=[v for u,v in candidates.items() if u not in previously][:25]
+        # Check actual WiseNetwork article URLs first. Otherwise a homepage
+        # with dozens of generic links can consume the entire candidate budget.
+        remaining=[v for u,v in candidates.items() if u not in previously]
+        remaining.sort(key=lambda item: (
+            0 if re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$',urlparse(item[1]).path,re.I) else 1,
+            0 if '/uutis' in urlparse(item[1]).path.lower() else 1))
+        to_check=remaining[:35]
         if to_check:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 for article in executor.map(lambda a:_club_article_candidate(team,domain,a),to_check):

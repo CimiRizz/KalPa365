@@ -1,27 +1,27 @@
-# Liiga365 v0.4 – viralliset joukkuesivustot
+# Liiga365 v0.5 – Pelicans, Tappara ja TPS -uutiskorjaukset
 
-**Vain branchiin `feature/liiga365`.** Älä muuta KalPa365:n `main`-branchia.
+Tämä on Liiga365:n `feature/liiga365`-branchille tarkoitettu kehitysversio, joka perustuu toimivaan v0.4-koodiin.
 
-## Muutokset
-- Kaikkien 17 joukkueen viralliset uutislähteet lisätty annettujen verkkotunnusten perusteella.
-- KalPa säilyttää aiemman KalPa.fi-hakunsa, mukaan lukien kausiuutislista.
-- Muut joukkueet: oma virallinen uutisvirta + Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset ja Kiekkouutiset.
-- Virallisten sivujen RSS-osoitteet kokeillaan vain, jos ne ovat julkisesti saatavilla. Lisäksi haetaan etusivun ja uutislistasivun artikkelilinkit.
-- Kaikille artikkeleille vaaditaan lähteen itsensä ilmoittama julkaisupäivä. Linkki hyväksytään vain joukkueen omalta verkkotunnukselta.
-- Jokaisella joukkueella on oma 15 minuutin välimuisti. Lähteet käynnistyvät vasta joukkueen valinnalla.
-- Artikkelilukija hyväksyy nyt myös näiden virallisten sivujen artikkeliosoitteet.
-- Uutishaun lähdekohtainen tila näkyy `/api/news?team=<joukkue>` -vastauksen `sources`-kentässä.
-- `index.html` säilyy täysin samana kuin v0.3:ssa. Ulkoasua ei ole muutettu.
+## Korjaukset
+
+- Pelicansin virallinen uutislista: `https://pelicans.fi/fi-fi/cg/uutinen/1/` ja `https://pelicans.fi/fi-fi/`.
+- Tapparan virallinen uutislista: `https://www.tappara.fi/fi-fi/cg/uutiset/1/` ja `https://www.tappara.fi/fi-fi/`.
+- TPS:n virallinen uutislista: `https://hc.tps.fi/fi-fi/cg/uutiset/1/` ja `https://hc.tps.fi/fi-fi/`.
+- WiseNetwork-sivujen artikkelilinkit (`/fi-fi/article/...`) asetetaan etusijalle, jotta navigaatio- ja mainoslinkit eivät kuluta tarkistusmäärää.
+- Artikkelin julkaisupäivä löydetään myös artikkelin otsikon välittömästä läheisyydestä, jos koneellisesti luettava päiväys puuttuu.
+- Muut 14 joukkuetta, yhteiset uutislähteet ja aiemmin hyväksytty käyttöliittymä ennallaan.
 
 ## Asennus
-1. Siirry GitHubissa `feature/liiga365`-branchiin.
-2. Korvaa vain `KalPa365_palvelin.py` tässä ZIPissä olevalla uudella tiedostolla.
-3. Julkaise oma Liiga365-testipalvelu Renderissä.
-4. Testaa esimerkiksi `/api/news?team=jyp`, `/api/news?team=ilves`, `/api/news?team=kalpa`.
-5. Ensimmäinen kysely voi palauttaa `refreshing: true`; päivitä rajapintakyselyä, kunnes haku valmistuu.
 
-## Testit
-Paikallisesti `python -m unittest discover -s tests -v`: **18/18 OK**. Lisäksi Python-tiedoston syntaksi tarkistettu. Näitä ei ole testattu käyttäjän Render-palvelussa.
+1. Avaa GitHub-repositorion branch `feature/liiga365`.
+2. Korvaa **vain** `KalPa365_palvelin.py` tällä tiedostolla.
+3. Render julkaisee uuden branch-version, jos automaattinen julkaisu on päällä; muutoin tee Manual Deploy.
+4. Avaa Liiga365 ja vaihda Pelicansiin, Tapparaan ja TPS:ään. Uudessa prosessissa seurakohtaiset välimuistit alkavat tyhjistä; anna hakukierroksen valmistua.
+5. Tarkista `/api/news?team=pelicans`, `/api/news?team=tappara`, `/api/news?team=tps`. `sources`-osiossa näkyvät lähdekohtaiset `pages`/`candidates` ja uutisten määrät.
 
-## Huomioitavat rajoitteet
-Jokainen seura käyttää omanlaistaan sivurakennetta. Osa voi olla JavaScriptillä toteutettu, eikä artikkelilistoja tai julkaisupäiviä voi välttämättä lukea ilman sivustokohtaista hakijaa. RSS-osoitteita ei ole vahvistettu kaikille seuroille. Virhelähteet eivät keskeytä muiden uutisten hakua. Virallisen sivun teksti ei aina ole luettavissa julkisesti lukutilaan. Ei oleteta julkaisuajaksi nykyhetkeä eikä näytetä tekaistuja uutisia. Uutisten tuotantokattavuus edellyttää erillistä seura- ja lähdekohtaista testausta Renderissä.
+## Testattu
+
+`python -m unittest discover -s tests -v` → 23 testiä hyväksytty.
+`python -m py_compile KalPa365_palvelin.py` → hyväksytty.
+
+Huomio: ulkoisten sivujen saatavuutta Renderin verkosta ei voida taata paikallisilla yksikkötesteillä; varmistus tehdään julkaistulla testipalvelulla.
