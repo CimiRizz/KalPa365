@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liiga365 v0.6 — five official news-source repairs."""
+"""Liiga365 v1.0 — fast progressive official news fetch."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -1990,67 +1990,114 @@ def _club_wp_posts(team,domain):
                         'summary':summary,'published':date,'timestamp':stamp})
     return results
 
+def _publish_official_progress(team, rows, diagnostics):
+    """Expose verified club headlines while the remaining requests are running."""
+    merged = {a['url']: a for a in rows if a.get('url') and a.get('timestamp')}
+    if not merged:
+        return
+    with OFFICIAL_NEWS_LOCK:
+        previous = OFFICIAL_NEWS_CACHE[team]['articles']
+        for a in previous:
+            merged.setdefault(a['url'], a)
+        OFFICIAL_NEWS_CACHE[team].update(
+            articles=sorted(merged.values(), key=lambda a: a['timestamp'], reverse=True)[:80],
+            diagnostics=list(diagnostics))
+
+
 def _refresh_official_club(team):
-    domain,pages=OFFICIAL_CLUBS[team]
-    diagnostics=[];rows=[]
+    """Fast official-first search: parallel feeds/listings, progressive results.
+
+    Avoid fetching 35 article pages before a single result is visible.
+    Use a small first batch; expand only if fewer than three dated articles
+    were discovered. Each accepted date still comes from the publisher.
+    """
+    domain, pages = OFFICIAL_CLUBS[team]
+    diagnostics, rows, candidates = [], [], {}
     try:
-        if team=='kiekko-espoo':
-            try:
-                found=_club_wp_posts(team,domain)
-                rows.extend(found)
-                diagnostics.append({'url':f'https://{domain}/wp-json/wp/v2/posts',
-                                    'status':'ok','count':len(found)})
-            except (ValueError,OSError,TimeoutError,UnicodeError,KeyError,TypeError) as exc:
-                diagnostics.append({'url':f'https://{domain}/wp-json/wp/v2/posts',
-                                    'status':'error','message':type(exc).__name__})
-        # WordPress-based clubs sometimes expose their own RSS; gracefully
-        # fall back to their public news listing when there is no valid feed.
-        feed_urls=[f'https://{domain}/feed/',f'https://www.{domain}/feed/']
-        if team=='jokerit':feed_urls.insert(0,'https://www.jokerit.fi/uutiset?format=rss')
-        if team=='kiekko-espoo':feed_urls.insert(0,'https://kiekko-espoo.fi/uutiset-ja-tarinat/feed/')
-        for url in feed_urls:
-            try:
-                got=_club_feed(team,domain,url)
-                rows.extend(got)
-                diagnostics.append({'url':url,'status':'ok','count':len(got)})
-                if got:break
-            except (ValueError,OSError,TimeoutError,ET.ParseError) as exc:
-                diagnostics.append({'url':url,'status':'error','message':type(exc).__name__})
-        # Also examine public news cards: feeds may omit official articles.
-        candidates={}
-        for url in pages:
-            try:
-                html_doc=_club_fetch(url,domain)
-                parser=ClubNewsLinkParser(url,domain);parser.feed(html_doc)
-                for title,link in parser.links[:65]:candidates.setdefault(link,(title,link))
-                diagnostics.append({'url':url,'status':'ok','candidates':len(parser.links)})
-            except (ValueError,OSError,TimeoutError) as exc:
-                diagnostics.append({'url':url,'status':'error','message':type(exc).__name__})
-        previously={row['url'] for row in rows}
-        # Check actual WiseNetwork article URLs first. Otherwise a homepage
-        # with dozens of generic links can consume the entire candidate budget.
-        remaining=[v for u,v in candidates.items() if u not in previously]
+        feed_urls = [f'https://{domain}/feed/', f'https://www.{domain}/feed/']
+        if team == 'jokerit':
+            feed_urls.insert(0, 'https://www.jokerit.fi/uutiset?format=rss')
+        if team == 'kiekko-espoo':
+            feed_urls.insert(0, 'https://kiekko-espoo.fi/uutiset-ja-tarinat/feed/')
+
+        def fetch_listing(url):
+            document = _club_fetch(url, domain)
+            parser = ClubNewsLinkParser(url, domain)
+            parser.feed(document)
+            return parser.links[:65]
+
+        def fetch_feed(url):
+            return _club_feed(team, domain, url)
+
+        jobs = [('page', url) for url in pages] + [('feed', url) for url in feed_urls]
+        if team == 'kiekko-espoo':
+            jobs.insert(0, ('wp', f'https://{domain}/wp-json/wp/v2/posts'))
+        # Fetch independent endpoints in parallel. A slow home page does not
+        # block completed RSS or news-list results from reaching the screen.
+        with ThreadPoolExecutor(max_workers=min(len(jobs), 7)) as executor:
+            futures = {}
+            for kind, url in jobs:
+                fn = (_club_wp_posts if kind == 'wp' else
+                      fetch_feed if kind == 'feed' else fetch_listing)
+                args = (team, domain) if kind == 'wp' else (url,)
+                futures[executor.submit(fn, *args)] = (kind, url)
+            for future in as_completed(futures):
+                kind, url = futures[future]
+                try:
+                    found = future.result()
+                    if kind == 'page':
+                        for title, link in found:
+                            candidates.setdefault(link, (title, link))
+                        diagnostics.append({'url': url, 'status': 'ok', 'candidates': len(found)})
+                    else:
+                        rows.extend(found)
+                        diagnostics.append({'url': url, 'status': 'ok', 'count': len(found)})
+                        _publish_official_progress(team, rows, diagnostics)
+                except (ValueError, OSError, TimeoutError, ET.ParseError, KeyError, TypeError) as exc:
+                    diagnostics.append({'url': url, 'status': 'error', 'message': type(exc).__name__})
+
+        known = {a['url'] for a in rows}
+        remaining = [v for u, v in candidates.items() if u not in known]
         remaining.sort(key=lambda item: (
-            0 if re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$',urlparse(item[1]).path,re.I) else 1,
+            0 if re.match(r'^/fi-fi/article/[^/]+/[^/]+/\d+/?$', urlparse(item[1]).path, re.I) else 1,
             0 if '/uutis' in urlparse(item[1]).path.lower() else 1))
-        to_check=remaining[:35]
-        if to_check:
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                for article in executor.map(lambda a:_club_article_candidate(team,domain,a),to_check):
-                    if article:rows.append(article)
-        diagnostics.append({'status':'parsed','article_checks':len(to_check),
-                            'accepted':len(rows),'candidate_links':len(candidates)})
-        merged={a['url']:a for a in rows if a.get('timestamp')}
-        articles=sorted(merged.values(),key=lambda a:a['timestamp'],reverse=True)[:80]
-        err=None if articles or any(d['status']=='ok' for d in diagnostics) else 'Kaikkien virallisten lähdesivujen haku epäonnistui'
+        # RSS may already contain enough confirmed articles. When it does,
+        # do not make dozens of unnecessary article HTTP requests.
+        checked = 0
+        if len({a['url'] for a in rows}) < 3:
+            for start, end in ((0, 12), (12, 24)):
+                batch = remaining[start:end]
+                if not batch:
+                    break
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    futures = [executor.submit(_club_article_candidate, team, domain, item)
+                               for item in batch]
+                    for future in as_completed(futures):
+                        checked += 1
+                        article = future.result()
+                        if article:
+                            rows.append(article)
+                            _publish_official_progress(team, rows, diagnostics)
+                if len({a['url'] for a in rows}) >= 3:
+                    break
+        diagnostics.append({'status': 'parsed', 'article_checks': checked,
+                            'accepted': len(rows), 'candidate_links': len(candidates)})
+        fresh = {a['url']: a for a in rows if a.get('timestamp')}
+        articles = sorted(fresh.values(), key=lambda a: a['timestamp'], reverse=True)[:80]
+        err = None if articles or any(d['status'] == 'ok' for d in diagnostics) else 'Kaikkien virallisten lähdesivujen haku epäonnistui'
         with OFFICIAL_NEWS_LOCK:
-            OFFICIAL_NEWS_CACHE[team].update(at=time.time(),articles=articles,error=err,
-                         diagnostics=diagnostics,updated=datetime.now(timezone.utc).isoformat())
+            # Retain last good results if a transient fetch returns nothing.
+            OFFICIAL_NEWS_CACHE[team].update(
+                at=time.time(), articles=articles or OFFICIAL_NEWS_CACHE[team]['articles'],
+                error=err, diagnostics=diagnostics,
+                updated=datetime.now(timezone.utc).isoformat())
     except Exception as exc:
         with OFFICIAL_NEWS_LOCK:
-            OFFICIAL_NEWS_CACHE[team].update(at=time.time(),error=f'{type(exc).__name__}: {str(exc)[:120]}',diagnostics=diagnostics)
+            OFFICIAL_NEWS_CACHE[team].update(at=time.time(),
+                error=f'{type(exc).__name__}: {str(exc)[:120]}', diagnostics=diagnostics)
     finally:
-        with OFFICIAL_NEWS_LOCK:OFFICIAL_NEWS_CACHE[team]['refreshing']=False
+        with OFFICIAL_NEWS_LOCK:
+            OFFICIAL_NEWS_CACHE[team]['refreshing'] = False
 
 def official_news(team):
     with OFFICIAL_NEWS_LOCK:
