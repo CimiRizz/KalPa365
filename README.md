@@ -1,20 +1,16 @@
-# KalPa365 v6.24 – KalPa.fi:n tuoreiden uutisten korjaus
+# KalPa365 v6.25 – KalPa.fi:n tuoreiden uutisten päivämääräkorjaus
 
-Pohjana v6.23. KalPa365:n hyväksytty ulkoasu ja vaiheittainen uutishaku säilyvät.
+## Mikä meni vikaan?
+KalPa.fi:n artikkelit saatettiin tunnistaa, mutta poistettiin uutislistalta, koska HTML-päivämäärän varatunnistin etsi päivämäärää vain otsikon alapuolelta. KalPan sivupohjissa se voi sijaita ennen H1-otsikkoa.
 
-## Korjaukset
-
-1. KalPa.fi:n uutisia haetaan nyt myös suoraan kauden 2026–2027 uutislistalta: https://kalpa.fi/fi-fi/cg/2026-2027/60/ . Tämä on ensisijainen hakusivu; KalPan etusivu säilyy toisena lähteenä.
-2. Korjattu uutishaun loppuvaiheessa oleva vanhan `outcomes`-muuttujan viittaus. Se saattoi keskeyttää uutishaun ennen lopullista tulosjoukkoa.
-3. Nykyinen päivämäärän tarkistus, uusimpien uutisten järjestäminen ja välimuistista vaiheittain päivittyminen säilyvät.
+## Korjaus
+- Etsii julkaisupäivän ensisijaisesti alkuperäisen artikkelin koneellisesta metadatasta ja vaihtoehtoisesti otsikon välittömästä läheisyydestä myös sen yläpuolelta.
+- Tarkistaa lisäksi KalPan etusivun `?lang=fi-FI`-version ja kauden 2026–2027 uutislistan.
+- Ei käytä hakuhetkeä artikkelin julkaisuaikana eikä tuo vanhoja uutisia uusina.
+- Muut uutislähteet, nopea vaiheittainen haku ja `index.html` säilyvät ennallaan.
 
 ## Asennus
+Korvaa GitHub-repositoriossa **vain `KalPa365_palvelin.py`** ja odota Render-julkaisua. Päivitä uutishaku ja tarkista `/api/news` → `sources` → `KalPa.fi` → `direct_pages` sekä `articles`.
 
-Korvaa GitHubissa **vain `KalPa365_palvelin.py`**, odota Render-julkaisua ja paina KalPa365:n **Päivitä**-painiketta. Tarkista sitten `/api/news`: `sources` → `KalPa.fi` → `direct_pages` → `pages`. Kauden uutislistan pitäisi näkyä siinä omana tarkistettuna sivunaan. Uusien artikkelien pitää näkyä, jos julkaisija tarjoaa ne sivun HTML:ssä ja julkaisuajat löytyvät artikkelista.
-
-## Testit ja rajoitteet
-
-- Python-syntaksi tarkistettu.
-- HTML-testillä tarkistettu, että kauden uutissivun artikkelilinkit tunnistuvat ja muut linkit hylätään.
-- GitHub- ja Render-ympäristöissä toimintaa ei ole testattu. KalPa.fi:n live-HTML:ää ei voitu lukea tästä suoritusympäristöstä; sivun nykyiset uutiset vahvistettiin julkisista hakutuloksista.
-- Ei muutoksia `index.html`-tiedostoon eikä ulkoasun lukittuihin asetuksiin.
+## Testaus ja rajaus
+Pythonin syntaksi ja paikalliset HTML-esimerkit testattu. KalPa.fi:n todellinen live-HTML ja Render-päivitys tulee vielä tarkistaa julkaisun jälkeen; tämän ympäristön suorat verkkopyynnöt KalPa.fi-palveluun eivät onnistu.

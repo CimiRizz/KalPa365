@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.24 — reliable KalPa season-news discovery."""
+"""KalPa365 v6.25 — repair official KalPa news date discovery."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -268,6 +268,7 @@ def fetch_liiga():
 DIRECT_PAGES = {
     'KalPa.fi': [
         'https://kalpa.fi/fi-fi/cg/2026-2027/60/',
+        'https://kalpa.fi/?lang=fi-FI',
         'https://kalpa.fi/',
     ],
     'SuomiKiekko': ['https://www.suomikiekko.com/?s=KalPa', 'https://www.suomikiekko.com/', 'https://www.suomikiekko.com/uusimmat/'],
@@ -921,17 +922,76 @@ class ArticleHeaderDateParser(HTMLParser):
             self.text.append(data)
             self.length += len(data)
 
+class KalpaHeadingDateParser(HTMLParser):
+    """Find a publisher date adjacent to H1, including *before* the heading.
+
+    KalPa's templates can place publication date above the headline; the old
+    after-H1-only parser ignored those dates and silently dropped fresh news.
+    Do not take dates from generic article body, fixtures or match schedules.
+    """
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.h1_start = None
+        self.h1_end = None
+        self.hidden = 0
+        self.in_h1 = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script', 'style', 'nav', 'footer', 'aside', 'noscript'):
+            self.hidden += 1
+        if tag == 'h1' and not self.hidden and self.h1_start is None:
+            self.in_h1 = True
+            self.h1_start = len(''.join(self.parts))
+
+    def handle_data(self, data):
+        if not self.hidden and len(''.join(self.parts)) < 22000:
+            self.parts.append(' ' + data.strip() + ' ')
+
+    def handle_endtag(self, tag):
+        if tag == 'h1' and self.in_h1:
+            self.h1_end = len(''.join(self.parts))
+            self.in_h1 = False
+        if tag in ('script', 'style', 'nav', 'footer', 'aside', 'noscript') and self.hidden:
+            self.hidden -= 1
+
+    def nearest_date(self):
+        if self.h1_start is None:
+            return 0
+        text = ' '.join(''.join(self.parts).split())
+        # Recalculate headline position against normalized text: raw positions
+        # are only for slicing the original concatenated string.
+        raw = ''.join(self.parts)
+        before = ' '.join(raw[max(0, self.h1_start-200):self.h1_start].split())
+        after = ' '.join(raw[self.h1_end or self.h1_start:(self.h1_end or self.h1_start)+240].split())
+        pattern = r'(?<!\d)(\d{1,2}\.\d{1,2}\.20\d{2}(?:\s+(?:klo\s*)?\d{1,2}[:.]\d{2})?)(?!\d)'
+        # Nearest publication date is normally immediately above the H1.
+        choices = list(re.finditer(pattern, before, re.I))
+        if choices:
+            found = choices[-1].group(1)
+            return parse_publication_date(re.sub(r'\s+klo\s+', ' ', found, flags=re.I).replace('klo ', '').replace(' ', ' ', 1))
+        match = re.search(pattern, after, re.I)
+        if match:
+            found = re.sub(r'\s+klo\s+', ' ', match.group(1), flags=re.I)
+            # HH.MM clock notation is allowed by the site's visible timestamp.
+            found = re.sub(r'(\d{1,2}):(\d{2})$', r'\1:\2', found)
+            return parse_publication_date(found)
+        return 0
+
+
 def publication_date_from_html(raw, source_host=''):
-    parser=PublicationDateParser();parser.feed(raw)
-    for value in structured_published(parser.scripts)+parser.metadata+parser.time_values:
-        stamp=parse_publication_date(value)
-        if stamp:return stamp
-    # Only on publishers known to show a Finnish date directly below the h1.
-    # Never read arbitrary dates from the article body (matches or future games).
-    if source_host in ('kalpa.fi','www.kalpa.fi','suomikiekko.com','www.suomikiekko.com'):
-        header=ArticleHeaderDateParser();header.feed(raw)
-        match=re.search(r'(?<!\d)(\d{1,2}\.\d{1,2}\.20\d{2}(?:\s+\d{1,2}:\d{2})?)(?!\d)', ' '.join(header.text)[:350])
-        if match:return parse_publication_date(match.group(1))
+    parser = PublicationDateParser(); parser.feed(raw)
+    for value in structured_published(parser.scripts) + parser.metadata + parser.time_values:
+        stamp = parse_publication_date(value)
+        if stamp: return stamp
+    if source_host in ('kalpa.fi', 'www.kalpa.fi', 'api.kalpa.fi'):
+        header = KalpaHeadingDateParser(); header.feed(raw)
+        stamp = header.nearest_date()
+        if stamp: return stamp
+    if source_host in ('suomikiekko.com', 'www.suomikiekko.com'):
+        header = ArticleHeaderDateParser(); header.feed(raw)
+        match = re.search(r'(?<!\d)(\d{1,2}\.\d{1,2}\.20\d{2}(?:\s+\d{1,2}:\d{2})?)(?!\d)', ' '.join(header.text)[:350])
+        if match: return parse_publication_date(match.group(1))
     return 0
 
 class ArticleHeadlineParser(HTMLParser):
