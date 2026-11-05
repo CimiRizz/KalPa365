@@ -50,6 +50,10 @@ ALLOWED_PUBLISHERS = (
     'kalpa.fi',
     'suomikiekko.com',
     'kiekkouutiset.fi',
+    'hifk.fi', 'hpk.fi', 'ilves.com', 'jokerit.com', 'jukurit.fi',
+    'jypliiga.fi', 'kiekko-espoo.com', 'kookoo.fi', 'karpat.fi',
+    'raumanlukko.fi', 'pelicans.fi', 'saipa.fi', 'vaasansport.fi',
+    'tappara.fi', 'hc.tps.fi', 'assat.com',
 )
 
 def allowed_publisher(url):
@@ -1818,6 +1822,192 @@ def team_news(team):
     base['sources'].update(sources)
     if error:base.setdefault('errors',[]).append('Julkaisijalähteet: '+error)
     base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset'
+    return base
+
+
+# Liiga365 v0.4: official club news. One independent cache per selected club;
+# no need to hit sixteen websites for each user request. KalPa continues to
+# use its established news collector, which already includes kalpa.fi.
+OFFICIAL_CLUBS = {
+    'hifk': ('hifk.fi', ['https://hifk.fi/', 'https://hifk.fi/uutiset/']),
+    'hpk': ('hpk.fi', ['https://hpk.fi/', 'https://hpk.fi/uutiset/']),
+    'ilves': ('ilves.com', ['https://www.ilves.com/uutiset/', 'https://www.ilves.com/']),
+    'jokerit': ('jokerit.com', ['https://jokerit.com/', 'https://jokerit.com/uutiset/']),
+    'jukurit': ('jukurit.fi', ['https://jukurit.fi/', 'https://jukurit.fi/uutiset/']),
+    'jyp': ('jypliiga.fi', ['https://www.jypliiga.fi/uutiset/', 'https://www.jypliiga.fi/']),
+    'kalpa': ('kalpa.fi', ['https://kalpa.fi/fi-fi/cg/2026-2027/60/']),
+    'kiekko-espoo': ('kiekko-espoo.com', ['https://kiekko-espoo.com/', 'https://kiekko-espoo.com/uutiset/']),
+    'kookoo': ('kookoo.fi', ['https://kookoo.fi/', 'https://kookoo.fi/uutiset/']),
+    'karpat': ('karpat.fi', ['https://karpat.fi/', 'https://karpat.fi/uutiset/']),
+    'lukko': ('raumanlukko.fi', ['https://raumanlukko.fi/', 'https://raumanlukko.fi/uutiset/']),
+    'pelicans': ('pelicans.fi', ['https://pelicans.fi/', 'https://pelicans.fi/uutiset/']),
+    'saipa': ('saipa.fi', ['https://saipa.fi/', 'https://saipa.fi/uutiset/']),
+    'sport': ('vaasansport.fi', ['https://vaasansport.fi/', 'https://vaasansport.fi/uutiset/']),
+    'tappara': ('tappara.fi', ['https://www.tappara.fi/', 'https://www.tappara.fi/uutiset/']),
+    'tps': ('hc.tps.fi', ['https://hc.tps.fi/', 'https://hc.tps.fi/uutiset/']),
+    'assat': ('assat.com', ['https://assat.com/', 'https://assat.com/uutiset/']),
+}
+assert set(OFFICIAL_CLUBS) == set(TEAMS)
+OFFICIAL_NEWS_TTL = 900
+OFFICIAL_NEWS_LOCK = threading.RLock()
+OFFICIAL_NEWS_CACHE = {k: {'at':0, 'articles':[], 'refreshing':False, 'error':None,
+                           'updated':None, 'diagnostics':[]} for k in TEAMS}
+
+def _club_url(url, domain):
+    parsed = urlparse(url)
+    # No arbitrary redirects, ports or schemes. Only the team's approved domain.
+    return parsed.scheme == 'https' and parsed.port is None and bool(parsed.hostname) and (
+        parsed.hostname == domain or parsed.hostname.endswith('.'+domain))
+
+class ClubNewsLinkParser(HTMLParser):
+    """Find public article candidates in a club's own HTML, not all site links."""
+    def __init__(self, base, domain):
+        super().__init__(convert_charrefs=True)
+        self.base, self.domain = base, domain
+        self.links, self.anchor = [], None
+        self.depth = 0
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'a':
+            url = urljoin(self.base, attrs.get('href') or '').split('#')[0]
+            self.anchor = [url, [attrs.get('title',''), attrs.get('aria-label','')]] if _club_url(url,self.domain) else None
+            self.depth = 1 if self.anchor else 0
+        elif self.anchor:
+            self.depth += 1
+            if tag == 'img':self.anchor[1].append(attrs.get('alt',''))
+    def handle_data(self,data):
+        if self.anchor:self.anchor[1].append(data)
+    def handle_endtag(self,tag):
+        if not self.anchor:return
+        self.depth -= 1
+        if tag == 'a' or self.depth <= 0:
+            url, parts = self.anchor
+            title = strip_markup(' '.join(parts)).strip()
+            path = urlparse(url).path.lower().rstrip('/')
+            blocked = ('/ottelut','/joukkue','/pelaajat','/liput','/kauppa','/yhteystiedot',
+                       '/kumppanit','/tietoa','/seura','/kalenteri','/season','/schedule',
+                       '/category','/tag','/page','/feed')
+            if (len(title) >= 15 and len(title) <= 230 and path.count('/') >= 1
+                and path not in ('/uutiset','/news','/ajankohtaista')
+                and not any(path == t or path.startswith(t+'/') for t in blocked)
+                and not re.search(r'\.(?:pdf|png|jpeg|jpg|svg|webp|xml)$',path)):
+                self.links.append((title,url))
+            self.anchor, self.depth = None, 0
+
+def _club_fetch(url, domain, accept='text/html'):
+    if not _club_url(url,domain):raise ValueError('Off-domain request')
+    req=Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; Liiga365/0.4)',
+                             'Accept':accept})
+    with urlopen(req,timeout=9) as response:
+        if not _club_url(response.geturl(),domain):raise ValueError('Off-domain redirect')
+        raw=response.read(1_500_001)
+        if len(raw)>1_500_000:raise ValueError('Oversized club response')
+        charset=response.headers.get_content_charset() or 'utf-8'
+        return raw.decode(charset,'replace')
+
+def _club_feed(team, domain, url):
+    raw=_club_fetch(url,domain,'application/rss+xml, application/xml, */*')
+    root=ET.fromstring(raw)
+    entries=[]
+    for node in root.iter():
+        if local(node.tag) not in ('item','entry'):continue
+        title=strip_markup(child_text(node,{'title'})).strip()
+        link=child_text(node,{'link'})
+        if not link:
+            link=next((c.attrib.get('href','') for c in node if local(c.tag)=='link' and c.attrib.get('href')), '')
+        if not _club_url(link,domain) or len(title)<12:continue
+        date=child_text(node,{'pubdate','published','updated','date'})
+        try: stamp=parsedate_to_datetime(date).timestamp()
+        except (TypeError,ValueError,OverflowError):
+            try:stamp=datetime.fromisoformat(date.replace('Z','+00:00')).timestamp()
+            except (TypeError,ValueError,OverflowError):continue
+        if not time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400:continue
+        entries.append({'title':title,'url':link,'source':TEAMS[team]+' (virallinen)',
+                        'summary':strip_markup(child_text(node,{'summary','description','encoded','content'}))[:600],
+                        'published':date,'timestamp':stamp})
+    return entries
+
+def _club_article_candidate(team, domain, candidate):
+    title,url = candidate
+    try:
+        document=_club_fetch(url,domain)
+        stamp=publication_date_from_html(document,urlparse(url).hostname or '')
+        if not time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400:return None
+        # Only accept verified article dates from the article itself.
+        hp=ArticleHeadlineParser();hp.feed(document)
+        article_title=strip_markup(' '.join(hp.h1) or (hp.meta[0] if hp.meta else title)).strip()
+        if len(article_title)<12:return None
+        return {'title':article_title,'url':url,'source':TEAMS[team]+' (virallinen)',
+                'summary':'','published':datetime.fromtimestamp(stamp,timezone.utc).isoformat(),
+                'timestamp':stamp}
+    except (ValueError,OSError,TimeoutError,UnicodeError):return None
+
+def _refresh_official_club(team):
+    domain,pages=OFFICIAL_CLUBS[team]
+    diagnostics=[];rows=[]
+    try:
+        # WordPress-based clubs sometimes expose their own RSS; gracefully
+        # fall back to their public news listing when there is no valid feed.
+        feed_urls=[f'https://{domain}/feed/',f'https://www.{domain}/feed/']
+        for url in feed_urls:
+            try:
+                got=_club_feed(team,domain,url)
+                rows.extend(got)
+                diagnostics.append({'url':url,'status':'ok','count':len(got)})
+                if got:break
+            except (ValueError,OSError,TimeoutError,ET.ParseError) as exc:
+                diagnostics.append({'url':url,'status':'error','message':type(exc).__name__})
+        # Also examine public news cards: feeds may omit official articles.
+        candidates={}
+        for url in pages:
+            try:
+                html_doc=_club_fetch(url,domain)
+                parser=ClubNewsLinkParser(url,domain);parser.feed(html_doc)
+                for title,link in parser.links[:65]:candidates.setdefault(link,(title,link))
+                diagnostics.append({'url':url,'status':'ok','candidates':len(parser.links)})
+            except (ValueError,OSError,TimeoutError) as exc:
+                diagnostics.append({'url':url,'status':'error','message':type(exc).__name__})
+        previously={row['url'] for row in rows}
+        to_check=[v for u,v in candidates.items() if u not in previously][:25]
+        if to_check:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                for article in executor.map(lambda a:_club_article_candidate(team,domain,a),to_check):
+                    if article:rows.append(article)
+        merged={a['url']:a for a in rows if a.get('timestamp')}
+        articles=sorted(merged.values(),key=lambda a:a['timestamp'],reverse=True)[:80]
+        err=None if articles or any(d['status']=='ok' for d in diagnostics) else 'Kaikkien virallisten lähdesivujen haku epäonnistui'
+        with OFFICIAL_NEWS_LOCK:
+            OFFICIAL_NEWS_CACHE[team].update(at=time.time(),articles=articles,error=err,
+                         diagnostics=diagnostics,updated=datetime.now(timezone.utc).isoformat())
+    except Exception as exc:
+        with OFFICIAL_NEWS_LOCK:
+            OFFICIAL_NEWS_CACHE[team].update(at=time.time(),error=f'{type(exc).__name__}: {str(exc)[:120]}',diagnostics=diagnostics)
+    finally:
+        with OFFICIAL_NEWS_LOCK:OFFICIAL_NEWS_CACHE[team]['refreshing']=False
+
+def official_news(team):
+    with OFFICIAL_NEWS_LOCK:
+        state=OFFICIAL_NEWS_CACHE[team]
+        if team!='kalpa' and time.time()-state['at']>=OFFICIAL_NEWS_TTL and not state['refreshing']:
+            state['refreshing']=True
+            threading.Thread(target=_refresh_official_club,args=(team,),daemon=True).start()
+        return list(state['articles']),state['refreshing'],state['error'],list(state['diagnostics'])
+
+_previous_news_with_publishers=team_news
+def team_news(team):
+    base=_previous_news_with_publishers(team)
+    if team not in TEAMS or team=='kalpa':return base
+    own,busy,error,diagnostics=official_news(team)
+    combined={a['url']:a for a in base.get('articles',[])+own if a.get('url')}
+    base['articles']=sorted(combined.values(),key=lambda a:a.get('timestamp',0),reverse=True)[:100]
+    base['refreshing']=bool(base.get('refreshing') or busy)
+    base['partial']=base['refreshing']
+    base['status']='ok' if base['articles'] else ('loading' if base['refreshing'] else 'empty')
+    base.setdefault('sources',{})[TEAMS[team]+' (virallinen)']={
+        'status':'loading' if busy else ('error' if error else 'ok'),
+        'count':len(own),'pages':diagnostics}
+    if error:base.setdefault('errors',[]).append('Virallinen kotisivu: '+error)
+    base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset, '+TEAMS[team]+' (virallinen)'
     return base
 
 class Handler(BaseHTTPRequestHandler):

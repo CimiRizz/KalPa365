@@ -1,30 +1,27 @@
-# Liiga365 v0.3 – feature/liiga365
+# Liiga365 v0.4 – viralliset joukkuesivustot
 
-**Asenna vain `feature/liiga365`-branchiin. KalPa365:n `main`-branchia ei muuteta.**
+**Vain branchiin `feature/liiga365`.** Älä muuta KalPa365:n `main`-branchia.
 
-## Korjaukset versioon v0.2
-
-- Poistettu Google Uutiset -RSS kokonaan uutisvirrasta. Google News -välityslinkit eivät olleet suoria julkaisijan artikkelilinkkejä, eivätkä toimineet KalPa365:n artikkelilukijassa.
-- Muut 16 joukkuetta: sama julkaisijavalikoima kuin KalPa365:ssä ilman KalPa.fi:tä: **Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset**.
-- Julkaisijat haetaan yhteisellä haulla. Joukkuekohtainen suodatus tehdään vasta uutisten löytämisen jälkeen, ei KalPa-nimellä lähdettä luettaessa.
-- `/api/article` ei enää vaadi, että muiden joukkueiden artikkelit löytyvät KalPa-kohtaisesta uutislistasta. Artikkelilukija rajoittuu edelleen tunnettuihin sallittuihin julkaisijoihin.
-- Säilytetty KalPan erillinen toimivaksi rakennettu uutishaku ja otteluohjelman haku.
-- `index.html` on sama kuin v0.2:ssa: hyväksyttyyn korttiasetteluun, joukkuevalintaan tai väreihin ei tehty muutoksia.
+## Muutokset
+- Kaikkien 17 joukkueen viralliset uutislähteet lisätty annettujen verkkotunnusten perusteella.
+- KalPa säilyttää aiemman KalPa.fi-hakunsa, mukaan lukien kausiuutislista.
+- Muut joukkueet: oma virallinen uutisvirta + Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset ja Kiekkouutiset.
+- Virallisten sivujen RSS-osoitteet kokeillaan vain, jos ne ovat julkisesti saatavilla. Lisäksi haetaan etusivun ja uutislistasivun artikkelilinkit.
+- Kaikille artikkeleille vaaditaan lähteen itsensä ilmoittama julkaisupäivä. Linkki hyväksytään vain joukkueen omalta verkkotunnukselta.
+- Jokaisella joukkueella on oma 15 minuutin välimuisti. Lähteet käynnistyvät vasta joukkueen valinnalla.
+- Artikkelilukija hyväksyy nyt myös näiden virallisten sivujen artikkeliosoitteet.
+- Uutishaun lähdekohtainen tila näkyy `/api/news?team=<joukkue>` -vastauksen `sources`-kentässä.
+- `index.html` säilyy täysin samana kuin v0.3:ssa. Ulkoasua ei ole muutettu.
 
 ## Asennus
+1. Siirry GitHubissa `feature/liiga365`-branchiin.
+2. Korvaa vain `KalPa365_palvelin.py` tässä ZIPissä olevalla uudella tiedostolla.
+3. Julkaise oma Liiga365-testipalvelu Renderissä.
+4. Testaa esimerkiksi `/api/news?team=jyp`, `/api/news?team=ilves`, `/api/news?team=kalpa`.
+5. Ensimmäinen kysely voi palauttaa `refreshing: true`; päivitä rajapintakyselyä, kunnes haku valmistuu.
 
-1. Avaa GitHub-repositorio ja vaihda branchiksi `feature/liiga365`.
-2. Korvaa **vain `KalPa365_palvelin.py`** tämän paketin tiedostolla.
-3. Renderin testipalvelu ottaa muutoksen käyttöön uuden julkaisun jälkeen.
-4. Avaa selaimessa Liiga365 ja paina `Ctrl+F5`.
+## Testit
+Paikallisesti `python -m unittest discover -s tests -v`: **18/18 OK**. Lisäksi Python-tiedoston syntaksi tarkistettu. Näitä ei ole testattu käyttäjän Render-palvelussa.
 
-## Testaus
-
-- `python -m unittest discover -s tests -v`
-- Renderissä tarkista `/api/news?team=tappara`, `/api/news?team=ilves` ja `/api/news?team=kalpa`.
-- Artikkeleissa `source` on alkuperäinen julkaisija eikä `Google Uutiset`.
-- Klikkaa uutiskorttia: `/api/article?url=...` hakee julkaisijan artikkelin tekstin, kun se on julkisesti haettavissa. Jos teksti ei ole saatavilla, näytetään tiivistelmä tai linkki alkuperäiseen artikkeliin.
-
-## Rajoitteet
-
-Julkaisijat voivat estää palvelimelta haun, vaihtaa sivurakennetta tai tarjota artikkeleita ilman luettavissa olevaa kokotekstiä. Tuloksia ei ole vielä testattu Renderissä. Puuttuvia uutisia, päivämääriä tai tekstiä ei keksitä. Pelkkä RSS-julkaisu ei välttämättä kata jokaista joukkueuutista. Nykyisen KalPa365:n alkuperäinen lukija ei kaikissa tapauksissa pysty tuomaan maksullista tai asiakaspohjaista sisältöä.
+## Huomioitavat rajoitteet
+Jokainen seura käyttää omanlaistaan sivurakennetta. Osa voi olla JavaScriptillä toteutettu, eikä artikkelilistoja tai julkaisupäiviä voi välttämättä lukea ilman sivustokohtaista hakijaa. RSS-osoitteita ei ole vahvistettu kaikille seuroille. Virhelähteet eivät keskeytä muiden uutisten hakua. Virallisen sivun teksti ei aina ole luettavissa julkisesti lukutilaan. Ei oleteta julkaisuajaksi nykyhetkeä eikä näytetä tekaistuja uutisia. Uutisten tuotantokattavuus edellyttää erillistä seura- ja lähdekohtaista testausta Renderissä.
