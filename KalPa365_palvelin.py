@@ -1209,7 +1209,6 @@ def _build_news():
     work = ([('rss', source, urls) for source, urls in FEEDS.items()]
             + [('direct', source, pages) for source, pages in DIRECT_PAGES.items()]
             + [('liiga', 'Liiga.fi', None)]
-            + [('jatkoaika_browser', 'Jatkoaika', None)]
             )  # v6.1: MTV team page replaces low-yield sitemap scan
     # Publisher fetches are independent network-bound tasks. Limit global
     # parallelism; each fetch retains its original per-request timeouts.

@@ -1,11 +1,9 @@
-# KalPa365 v6.20 – keskustelupalstaosio poistettu
+# KalPa365 v6.21 – Jatkoaika poistettu uutislähteistä
 
-Keskustelupalstan koko osio poistettu käyttöliittymästä: otsikot, viestit, linkit, RSS-tuonti sekä keskusteluviestien päivityspyynnöt.
+Jatkoaika on poistettu uutisten hakutyölistasta palvelimella sekä uutislähteiden valintalistasta käyttöliittymässä. Käyttöliittymä suodattaa myös mahdollisesti vanhassa välimuistissa olevat Jatkoaika-uutiset.
 
-Muu käyttöliittymä (yläpalkki, ottelut, uutiskortit, hakukenttä, päivityspainike, muut uutiset) säilyy alkuperäisen v6.17-version mukaisena. Osion poiston vuoksi sitä seuraava uutisalue siirtyy ylöspäin, mutta sen omaa asemointia tai tyylejä ei muutettu.
+Muita uutislähteitä, ottelutietoja, korttien asemointia tai visuaalista ilmettä ei muutettu. Vanhat keskustelupalstan palvelinrajapinnat säilyvät ennallaan eivätkä ole käyttöliittymän käytössä.
 
 ## Asennus
 
-Korvaa GitHub-repositoriossa vain index.html tällä versiolla. Render julkaisee sen normaalisti. Päivitä selaimessa Ctrl+F5.
-
-Paketin muut palvelintiedostot ovat v6.17:stä sellaisinaan, eikä niitä tarvitse vaihtaa tämän muutoksen vuoksi. Taustapalvelimen vanha /api/forum-posts -rajapinta voi olla olemassa taaksepäin yhteensopivuuden vuoksi, mutta käyttöliittymä ei käytä sitä. Windows-hakijan voi pysäyttää eikä sitä enää tarvita.
+Korvaa GitHubissa **index.html** ja **KalPa365_palvelin.py** tämän paketin tiedostoilla. Älä korvaa muita tiedostoja tarpeettomasti. Render julkaisee muutokset GitHubista. Päivitä selaimessa Ctrl+F5.
