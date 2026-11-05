@@ -1,27 +1,23 @@
-# Liiga365 v0.5 – Pelicans, Tappara ja TPS -uutiskorjaukset
+# Liiga365 v0.6 – virallisten seurasivujen uutiskorjaukset
 
-Tämä on Liiga365:n `feature/liiga365`-branchille tarkoitettu kehitysversio, joka perustuu toimivaan v0.4-koodiin.
+Perustuu Liiga365 v0.5:een. Branch: `feature/liiga365`. KalPa365 `main` ja lukittu käyttöliittymä pysyvät koskemattomina.
 
 ## Korjaukset
 
-- Pelicansin virallinen uutislista: `https://pelicans.fi/fi-fi/cg/uutinen/1/` ja `https://pelicans.fi/fi-fi/`.
-- Tapparan virallinen uutislista: `https://www.tappara.fi/fi-fi/cg/uutiset/1/` ja `https://www.tappara.fi/fi-fi/`.
-- TPS:n virallinen uutislista: `https://hc.tps.fi/fi-fi/cg/uutiset/1/` ja `https://hc.tps.fi/fi-fi/`.
-- WiseNetwork-sivujen artikkelilinkit (`/fi-fi/article/...`) asetetaan etusijalle, jotta navigaatio- ja mainoslinkit eivät kuluta tarkistusmäärää.
-- Artikkelin julkaisupäivä löydetään myös artikkelin otsikon välittömästä läheisyydestä, jos koneellisesti luettava päiväys puuttuu.
-- Muut 14 joukkuetta, yhteiset uutislähteet ja aiemmin hyväksytty käyttöliittymä ennallaan.
+- **Jokerit**: virallinen lähde vaihdettu `jokerit.com` → `jokerit.fi`; `https://www.jokerit.fi/uutiset`, Squarespace-uutis-RSS ja suomenkielisten pitkien julkaisupäivien varatunnistus.
+- **Jukurit**: `/fi-fi/cg/uutiset/1/` sekä suomenkielinen etusivu; WiseNetwork-artikkeleiden julkaisuajan tunnistus otsikon vierestä.
+- **Kiekko-Espoo**: vanha `kiekko-espoo.com` → virallinen liigajoukkueen `kiekko-espoo.fi/uutiset-ja-tarinat/`; lisäksi WordPressin julkinen read-only REST API -varahaku ja RSS-yritykset.
+- **SaiPa**: `/fi-fi/cg/uutiset/1/`, `/fi-fi/`; WiseNetwork-julkaisuajan varatunnistus.
+- **TPS**: useampi uutiskategorian reitti, `/fi-fi/` ja WiseNetwork-julkaisuajan varatunnistus.
+- Näkyvämpi lähdekohtainen diagnostiikka: `article_checks`, `accepted`, `candidate_links`.
+- Muiden joukkueiden lähteet, nopea uutishaku, ottelut, lukutila ja UI ennallaan.
 
 ## Asennus
 
-1. Avaa GitHub-repositorion branch `feature/liiga365`.
-2. Korvaa **vain** `KalPa365_palvelin.py` tällä tiedostolla.
-3. Render julkaisee uuden branch-version, jos automaattinen julkaisu on päällä; muutoin tee Manual Deploy.
-4. Avaa Liiga365 ja vaihda Pelicansiin, Tapparaan ja TPS:ään. Uudessa prosessissa seurakohtaiset välimuistit alkavat tyhjistä; anna hakukierroksen valmistua.
-5. Tarkista `/api/news?team=pelicans`, `/api/news?team=tappara`, `/api/news?team=tps`. `sources`-osiossa näkyvät lähdekohtaiset `pages`/`candidates` ja uutisten määrät.
+GitHubissa valitse **feature/liiga365**, korvaa **vain KalPa365_palvelin.py** ja julkaise erilliseen Liiga365-Render-palveluun. Älä korvaa KalPa365-mainia.
 
-## Testattu
+Testaa `/api/news?team=jokerit`, `jukurit`, `kiekko-espoo`, `saipa`, `tps`. Ensimmäinen vastaus voi sisältää `refreshing: true`, jolloin lähdekohtainen haku on vielä käynnissä; päivitä tai odota sivun automaattista päivitystä. `sources`-kohdasta näet `count`, `pages` ja uudet diagnostiikkakentät.
 
-`python -m unittest discover -s tests -v` → 23 testiä hyväksytty.
-`python -m py_compile KalPa365_palvelin.py` → hyväksytty.
+## Varmennus
 
-Huomio: ulkoisten sivujen saatavuutta Renderin verkosta ei voida taata paikallisilla yksikkötesteillä; varmistus tehdään julkaistulla testipalvelulla.
+29/29 yksikkötestiä läpäisty ja Python-syntaksi tarkistettu. Sivustojen live-vastauksia Renderistä ei ole varmennettu. WordPress-rajapinta voi olla suljettu eikä ole varmaa, että se palauttaa artikkelit; silloinkin perinteinen HTML/RSS-haku jatkuu.

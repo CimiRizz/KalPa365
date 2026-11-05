@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liiga365 v0.5 — official club news compatibility improvements."""
+"""Liiga365 v0.6 — five official news-source repairs."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -50,8 +50,8 @@ ALLOWED_PUBLISHERS = (
     'kalpa.fi',
     'suomikiekko.com',
     'kiekkouutiset.fi',
-    'hifk.fi', 'hpk.fi', 'ilves.com', 'jokerit.com', 'jukurit.fi',
-    'jypliiga.fi', 'kiekko-espoo.com', 'kookoo.fi', 'karpat.fi',
+    'hifk.fi', 'hpk.fi', 'ilves.com', 'jokerit.com', 'jokerit.fi', 'jukurit.fi',
+    'jypliiga.fi', 'kiekko-espoo.com', 'kiekko-espoo.fi', 'kookoo.fi', 'karpat.fi',
     'raumanlukko.fi', 'pelicans.fi', 'saipa.fi', 'vaasansport.fi',
     'tappara.fi', 'hc.tps.fi', 'assat.com',
 )
@@ -851,6 +851,20 @@ def parse_publication_date(value):
             return dt.timestamp()
         except (ValueError, OverflowError):
             return 0
+    # Finnish long-format dates (e.g. '3. marraskuuta 2026') on Squarespace.
+    months = {'tammikuuta':1,'helmikuuta':2,'maaliskuuta':3,'huhtikuuta':4,
+              'toukokuuta':5,'kesäkuuta':6,'heinäkuuta':7,'elokuuta':8,
+              'syyskuuta':9,'lokakuuta':10,'marraskuuta':11,'joulukuuta':12,
+              'tammikuu':1,'helmikuu':2,'maaliskuu':3,'huhtikuu':4,
+              'toukokuu':5,'kesäkuu':6,'heinäkuu':7,'elokuu':8,
+              'syyskuu':9,'lokakuu':10,'marraskuu':11,'joulukuu':12}
+    long_fi = re.fullmatch(r'(\d{1,2})\.\s*([a-zäö]+)\s+(20\d{2})', value, re.I)
+    if long_fi and long_fi.group(2).lower() in months:
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime(int(long_fi.group(3)),months[long_fi.group(2).lower()],
+                            int(long_fi.group(1)),12,tzinfo=ZoneInfo('Europe/Helsinki')).timestamp()
+        except (ValueError,OverflowError):return 0
     try:
         dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
@@ -991,7 +1005,8 @@ def publication_date_from_html(raw, source_host=''):
     if source_host in ('kalpa.fi', 'www.kalpa.fi', 'api.kalpa.fi',
                        'pelicans.fi', 'www.pelicans.fi',
                        'tappara.fi', 'www.tappara.fi',
-                       'hc.tps.fi', 'www.hc.tps.fi'):
+                       'hc.tps.fi', 'www.hc.tps.fi', 'saipa.fi', 'www.saipa.fi',
+                       'jukurit.fi', 'www.jukurit.fi'):
         # WiseNetwork club articles often display the date above H1 without
         # machine-readable publication metadata. Only accept a date right
         # beside H1; never use a fixture or footer date as publication date.
@@ -1838,19 +1853,19 @@ OFFICIAL_CLUBS = {
     'hifk': ('hifk.fi', ['https://hifk.fi/', 'https://hifk.fi/uutiset/']),
     'hpk': ('hpk.fi', ['https://hpk.fi/', 'https://hpk.fi/uutiset/']),
     'ilves': ('ilves.com', ['https://www.ilves.com/uutiset/', 'https://www.ilves.com/']),
-    'jokerit': ('jokerit.com', ['https://jokerit.com/', 'https://jokerit.com/uutiset/']),
-    'jukurit': ('jukurit.fi', ['https://jukurit.fi/', 'https://jukurit.fi/uutiset/']),
+    'jokerit': ('jokerit.fi', ['https://www.jokerit.fi/uutiset', 'https://www.jokerit.fi/']),
+    'jukurit': ('jukurit.fi', ['https://jukurit.fi/fi-fi/cg/uutiset/1/', 'https://jukurit.fi/fi-fi/', 'https://jukurit.fi/']),
     'jyp': ('jypliiga.fi', ['https://www.jypliiga.fi/uutiset/', 'https://www.jypliiga.fi/']),
     'kalpa': ('kalpa.fi', ['https://kalpa.fi/fi-fi/cg/2026-2027/60/']),
-    'kiekko-espoo': ('kiekko-espoo.com', ['https://kiekko-espoo.com/', 'https://kiekko-espoo.com/uutiset/']),
+    'kiekko-espoo': ('kiekko-espoo.fi', ['https://kiekko-espoo.fi/uutiset-ja-tarinat/', 'https://kiekko-espoo.fi/']),
     'kookoo': ('kookoo.fi', ['https://kookoo.fi/', 'https://kookoo.fi/uutiset/']),
     'karpat': ('karpat.fi', ['https://karpat.fi/', 'https://karpat.fi/uutiset/']),
     'lukko': ('raumanlukko.fi', ['https://raumanlukko.fi/', 'https://raumanlukko.fi/uutiset/']),
     'pelicans': ('pelicans.fi', ['https://pelicans.fi/fi-fi/', 'https://pelicans.fi/fi-fi/cg/uutinen/1/', 'https://pelicans.fi/']),
-    'saipa': ('saipa.fi', ['https://saipa.fi/', 'https://saipa.fi/uutiset/']),
+    'saipa': ('saipa.fi', ['https://saipa.fi/fi-fi/cg/uutiset/1/', 'https://saipa.fi/fi-fi/', 'https://saipa.fi/']),
     'sport': ('vaasansport.fi', ['https://vaasansport.fi/', 'https://vaasansport.fi/uutiset/']),
     'tappara': ('tappara.fi', ['https://www.tappara.fi/fi-fi/cg/uutiset/1/', 'https://www.tappara.fi/fi-fi/', 'https://www.tappara.fi/']),
-    'tps': ('hc.tps.fi', ['https://hc.tps.fi/fi-fi/cg/uutiset/1/', 'https://hc.tps.fi/fi-fi/', 'https://hc.tps.fi/']),
+    'tps': ('hc.tps.fi', ['https://hc.tps.fi/fi-fi/cg/uutiset/1/', 'https://hc.tps.fi/fi-fi/cg/uutinen/1/', 'https://hc.tps.fi/fi-fi/', 'https://hc.tps.fi/']),
     'assat': ('assat.com', ['https://assat.com/', 'https://assat.com/uutiset/']),
 }
 assert set(OFFICIAL_CLUBS) == set(TEAMS)
@@ -1942,6 +1957,10 @@ def _club_article_candidate(team, domain, candidate):
     try:
         document=_club_fetch(url,domain)
         stamp=publication_date_from_html(document,urlparse(url).hostname or '')
+        if not stamp and team == 'jokerit' and '/uutiset/' in urlparse(url).path:
+            # Jokerit/Squarespace sometimes has human-readable Finnish dates.
+            date_options = re.findall(r'(?<!\d)\d{1,2}\.\s*(?:tammikuuta|helmikuuta|maaliskuuta|huhtikuuta|toukokuuta|kesäkuuta|heinäkuuta|elokuuta|syyskuuta|lokakuuta|marraskuuta|joulukuuta)\s+20\d{2}',document[:30000],re.I)
+            stamp=next((t for v in date_options[:10] if (t:=parse_publication_date(v))),0)
         if not time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400:return None
         # Only accept verified article dates from the article itself.
         hp=ArticleHeadlineParser();hp.feed(document)
@@ -1952,13 +1971,43 @@ def _club_article_candidate(team, domain, candidate):
                 'timestamp':stamp}
     except (ValueError,OSError,TimeoutError,UnicodeError):return None
 
+def _club_wp_posts(team,domain):
+    # Read-only WordPress REST API if exposed. No authentication or scraping JS.
+    endpoint=f'https://{domain}/wp-json/wp/v2/posts?per_page=30&_fields=date,link,title,excerpt'
+    raw=_club_fetch(endpoint,domain,'application/json')
+    objects=json.loads(raw)
+    if not isinstance(objects,list):raise ValueError('WordPress response is not a post list')
+    results=[]
+    for item in objects[:30]:
+        url=item.get('link','')
+        if not _club_url(url,domain):continue
+        title=strip_markup((item.get('title') or {}).get('rendered',''))
+        summary=strip_markup((item.get('excerpt') or {}).get('rendered',''))[:600]
+        date=item.get('date','')
+        stamp=parse_publication_date(date)
+        if not 12<=len(title)<=230 or not time.time()-HISTORY_DAYS*86400<=stamp<=time.time()+86400:continue
+        results.append({'title':title,'url':url,'source':TEAMS[team]+' (virallinen)',
+                        'summary':summary,'published':date,'timestamp':stamp})
+    return results
+
 def _refresh_official_club(team):
     domain,pages=OFFICIAL_CLUBS[team]
     diagnostics=[];rows=[]
     try:
+        if team=='kiekko-espoo':
+            try:
+                found=_club_wp_posts(team,domain)
+                rows.extend(found)
+                diagnostics.append({'url':f'https://{domain}/wp-json/wp/v2/posts',
+                                    'status':'ok','count':len(found)})
+            except (ValueError,OSError,TimeoutError,UnicodeError,KeyError,TypeError) as exc:
+                diagnostics.append({'url':f'https://{domain}/wp-json/wp/v2/posts',
+                                    'status':'error','message':type(exc).__name__})
         # WordPress-based clubs sometimes expose their own RSS; gracefully
         # fall back to their public news listing when there is no valid feed.
         feed_urls=[f'https://{domain}/feed/',f'https://www.{domain}/feed/']
+        if team=='jokerit':feed_urls.insert(0,'https://www.jokerit.fi/uutiset?format=rss')
+        if team=='kiekko-espoo':feed_urls.insert(0,'https://kiekko-espoo.fi/uutiset-ja-tarinat/feed/')
         for url in feed_urls:
             try:
                 got=_club_feed(team,domain,url)
@@ -1989,6 +2038,8 @@ def _refresh_official_club(team):
             with ThreadPoolExecutor(max_workers=5) as executor:
                 for article in executor.map(lambda a:_club_article_candidate(team,domain,a),to_check):
                     if article:rows.append(article)
+        diagnostics.append({'status':'parsed','article_checks':len(to_check),
+                            'accepted':len(rows),'candidate_links':len(candidates)})
         merged={a['url']:a for a in rows if a.get('timestamp')}
         articles=sorted(merged.values(),key=lambda a:a['timestamp'],reverse=True)[:80]
         err=None if articles or any(d['status']=='ok' for d in diagnostics) else 'Kaikkien virallisten lähdesivujen haku epäonnistui'
