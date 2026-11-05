@@ -1,1 +1,49 @@
 
+name: Jatkoaika Chromium yhteystesti
+
+on:
+  workflow_dispatch:
+
+jobs:
+  chromium-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Asenna Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Testaa Jatkoajan keskustelusivu
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          url = "https://keskustelu.jatkoaika.com/forums/kalpa.161/"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              try:
+                  response = page.goto(
+                      url, wait_until="domcontentloaded",
+                      timeout=30000
+                  )
+                  status = response.status if response else None
+                  title = page.title()
+
+                  print("HTTP:", status)
+                  print("Sivun otsikko:", title)
+                  print("Lopullinen URL:", page.url)
+                  print("Viesteihin liittyviä elementtejä:",
+                        page.locator(".structItem").count())
+
+                  if status != 200:
+                      raise RuntimeError(
+                          f"Jatkoaika palautti HTTP {status}"
+                      )
+
+              finally:
+                  browser.close()
+          PY
