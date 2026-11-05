@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KalPa365 v6.25 — repair official KalPa news date discovery."""
+"""Liiga365 v0.2 — all-team news feeds and 2026–2027 official Liiga fixtures."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -1457,6 +1457,319 @@ def article_for(original, verify_only=False):
 TEAM_LOGO_FILES = frozenset({'kiekko-espoo.jpg', 'jukurit.jpg', 'jyp.jpg', 'sport.jpg', 'ilves.jpg', 'saipa.jpg', 'assat.jpg', 'karpat.jpg', 'tps.jpg', 'hpk.jpg', 'kookoo.jpg', 'pelicans.jpg', 'hifk.jpg', 'kalpa.jpg', 'tappara.jpg', 'lukko.jpg', 'jokerit.jpg'})
 
 
+
+# Liiga365 feature branch: isolate team-specific news without changing KalPa365 main.
+# The same Liiga API pages are fetched once per refresh, not once per user/team.
+TEAMS = {
+    'hifk': 'HIFK', 'hpk': 'HPK', 'ilves': 'Ilves', 'jokerit': 'Jokerit',
+    'jukurit': 'Jukurit', 'jyp': 'JYP', 'kalpa': 'KalPa', 'kiekko-espoo': 'Kiekko-Espoo',
+    'kookoo': 'KooKoo', 'karpat': 'Kärpät', 'lukko': 'Lukko', 'pelicans': 'Pelicans',
+    'saipa': 'SaiPa', 'sport': 'Sport', 'tappara': 'Tappara', 'tps': 'TPS', 'assat': 'Ässät'
+}
+TEAM_ALIASES = {
+    'hifk': [r'\bHIFK\b', r'\bHelsingin IFK\b'],
+    'hpk': [r'\bHPK\b', r'\bHämeenlinnan Pallokerho\b'],
+    'ilves': [r'\bIlves(?:tä|ksen|een|elle|ellä|eltä)?\b', r'\bTampereen Ilves\b'],
+    'jokerit': [r'\bJokerit\b', r'\bJokerien\b', r'\bJokereita\b'],
+    'jukurit': [r'\bJukurit\b', r'\bJukurien\b', r'\bMikkelin Jukurit\b'],
+    'jyp': [r'\bJYP\b', r'\bJyväskylän JYP\b'],
+    'kalpa': [r'\bKalPa(?:n|lle|lta|ssa|sta|an|a)?\b', r'\bKuopion KalPa\b'],
+    'kiekko-espoo': [r'\bK[- ]Espoo\b', r'\bKiekko[- ]Espoo\b'],
+    'kookoo': [r'\bKooKoo\b', r'\bKouvolan KooKoo\b'],
+    'karpat': [r'\bKärpät\b', r'\bKärppien\b', r'\bKärppiä\b', r'\bOulun Kärpät\b'],
+    'lukko': [r'\bLukko\b', r'\bLukon\b', r'\bRauman Lukko\b'],
+    'pelicans': [r'\bPelicans\b', r'\bLahden Pelicans\b'],
+    'saipa': [r'\bSaiPa\b', r'\bSaiPan\b', r'\bLappeenrannan SaiPa\b'],
+    'sport': [r'\bVaasan Sport\b', r'\bSportin\b', r'\bSportia\b', r'\bSportille\b'],
+    'tappara': [r'\bTappara\b', r'\bTapparan\b', r'\bTapparaa\b'],
+    'tps': [r'\bTPS\b', r'\bTurun Palloseura\b'],
+    'assat': [r'\bÄssät\b', r'\bÄssien\b', r'\bPorin Ässät\b'],
+}
+TEAM_PATTERNS = {key: re.compile('|'.join(forms), re.I) for key, forms in TEAM_ALIASES.items()}
+LEAGUE_CACHE = {'at': 0, 'articles': [], 'refreshing': False, 'error': None, 'updated': None}
+LEAGUE_LOCK = threading.RLock()
+
+def team_article_match(team, article):
+    if team not in TEAMS: return False
+    title = str(article.get('title') or '')
+    summary = str(article.get('summary') or '')
+    # Team names in title or opening summary only: avoid historic name-drops in full text.
+    if team == 'sport' and re.search(r'\b(e[- ]?sport|sports?|sportti)\b', title, re.I):
+        return bool(TEAM_PATTERNS[team].search(title+' '+summary[:220]))
+    return bool(TEAM_PATTERNS[team].search(title+' '+summary[:220]))
+
+def _fetch_league_pool():
+    # Bounded request budget: at most 8 pages * 16 stories per cycle.
+    fetched = []; seen = set(); cutoff = time.time() - HISTORY_DAYS * 86400
+    for offset in range(0, 128, 16):
+        url = 'https://liiga.fi/api/v2/news?' + urlencode({
+            'limitRequest':16,'offsetRequest':offset,
+            'builderOffsetRequest':offset,'legacyOffsetRequest':offset})
+        req = Request(url, headers={'User-Agent':'Mozilla/5.0 (Liiga365 news index)',
+                                    'Accept':'application/json','Referer':'https://liiga.fi/'})
+        with urlopen(req, timeout=12) as response:
+            if not allowed_publisher(response.geturl()): raise ValueError('Unexpected redirect')
+            raw = response.read(2_000_001)
+            if len(raw)>2_000_000: raise ValueError('Oversized response')
+        data = json.loads(raw.decode('utf-8-sig'))
+        records = data.get('articles', []) if isinstance(data,dict) else []
+        if not isinstance(records,list): raise ValueError('Unexpected Liiga response')
+        for rec in records:
+            if not isinstance(rec,dict): continue
+            title = strip_markup(rec.get('articleTitle') or rec.get('title') or '')
+            link = liiga_news_url(rec.get('url') or '')
+            stamp = liiga_date(rec.get('newsDate') or rec.get('published') or '')
+            if not title or not link or not stamp or stamp < cutoff or link in seen: continue
+            seen.add(link)
+            summary = strip_markup(rec.get('ingress') or rec.get('summary') or rec.get('searchText') or '')[:400]
+            fetched.append({'title':title,'summary':summary,'timestamp':stamp,
+                            'published':str(rec.get('newsDate') or ''),'url':link,'source':'Liiga.fi'})
+        if len(records)<16: break
+    return sorted(fetched,key=lambda a:a['timestamp'],reverse=True)
+
+def _refresh_league_pool():
+    try:
+        found = _fetch_league_pool()
+        with LEAGUE_LOCK:
+            LEAGUE_CACHE.update(articles=found,at=time.time(),updated=datetime.now(timezone.utc).isoformat(),error=None)
+    except Exception as exc:
+        with LEAGUE_LOCK:
+            LEAGUE_CACHE.update(at=time.time(),error=f'{type(exc).__name__}: {str(exc)[:160]}')
+    finally:
+        with LEAGUE_LOCK: LEAGUE_CACHE['refreshing']=False
+
+def team_news(team):
+    if team not in TEAMS: return {'status':'error','error':'Unknown team','articles':[]}
+    if team == 'kalpa':
+        result = news()
+        result['team'] = team
+        return result
+    with LEAGUE_LOCK:
+        if time.time()-LEAGUE_CACHE['at']>=TTL and not LEAGUE_CACHE['refreshing']:
+            LEAGUE_CACHE['refreshing']=True
+            threading.Thread(target=_refresh_league_pool,daemon=True).start()
+        pool = list(LEAGUE_CACHE['articles'])
+        refreshing = LEAGUE_CACHE['refreshing']
+        updated = LEAGUE_CACHE['updated']
+        err = LEAGUE_CACHE['error']
+    articles=[a for a in pool if team_article_match(team,a)]
+    # Matches are conservative: generic words are insufficient without team context.
+    return {'team':team,'status':'ok' if pool else ('loading' if refreshing else 'empty'),
+            'articles':articles[:100], 'refreshing':refreshing,'partial':refreshing,
+            'updated':updated,'sources':{'Liiga.fi':{'count':len(articles),'status':'error' if err else 'ok'}},
+            'errors':[err] if err else [],'coverage':'Liiga.fi; additional team sources pending validation'}
+
+
+# Liiga365 v0.2: all clubs have a club-specific news search in addition to
+# the single shared league-news index. RSS is best-effort; no fabricated news.
+# Aggregated Google News RSS carries links to the publisher and publication time.
+# Restrict queries to Finnish ice hockey to avoid everyday uses of team names.
+GOOGLE_NEWS_TERMS = {
+    'hifk':'HIFK jääkiekko', 'hpk':'HPK jääkiekko',
+    'ilves':'Ilves Liiga jääkiekko', 'jokerit':'Jokerit Liiga jääkiekko',
+    'jukurit':'Jukurit jääkiekko', 'jyp':'JYP jääkiekko',
+    'kalpa':'KalPa jääkiekko', 'kiekko-espoo':'Kiekko-Espoo Liiga',
+    'kookoo':'KooKoo jääkiekko', 'karpat':'Kärpät Oulu jääkiekko',
+    'lukko':'Rauman Lukko jääkiekko', 'pelicans':'Pelicans Lahti jääkiekko',
+    'saipa':'SaiPa jääkiekko', 'sport':'Vaasan Sport jääkiekko',
+    'tappara':'Tappara jääkiekko', 'tps':'TPS Turku jääkiekko',
+    'assat':'Ässät Pori jääkiekko',
+}
+TEAM_RSS_CACHE = {}
+TEAM_RSS_LOCK = threading.RLock()
+TEAM_NEWS_TTL = 600
+
+def _google_team_feed(team):
+    query = GOOGLE_NEWS_TERMS[team]
+    url = 'https://news.google.com/rss/search?' + urlencode({
+        'q': query + ' when:30d', 'hl':'fi', 'gl':'FI', 'ceid':'FI:fi'})
+    req = Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; Liiga365/0.2)',
+                               'Accept':'application/rss+xml, application/xml'})
+    with urlopen(req,timeout=9) as response:
+        if urlparse(response.geturl()).hostname not in ('news.google.com','www.news.google.com'):
+            raise ValueError('RSS redirect to an unexpected host')
+        raw=response.read(2_000_001)
+        if len(raw)>2_000_000: raise ValueError('RSS too large')
+    root=ET.fromstring(raw)
+    seen=set(); found=[]
+    for item in root.findall('.//item')[:80]:
+        title=strip_markup(child_text(item,{'title'}))
+        link=child_text(item,{'link'})
+        pub=child_text(item,{'pubdate','published','updated'})
+        summary=strip_markup(child_text(item,{'description'}))
+        if not title or not link or not link.startswith('https://news.google.com/'):
+            continue
+        # Query relevance is insufficient: the team must occur in headline or
+        # abstract. Some generic club names also require the hockey context.
+        if not team_article_match(team,{'title':title,'summary':summary}): continue
+        if team in ('ilves','sport','tps','lukko','assat','karpat'):
+            context=(title+' '+summary).casefold()
+            if not any(x in context for x in ('liiga','jääkiek','ottelu','pelaaj','maal','kiekko','seura','valmentaj',
+                                              'tampere','turku','rauma','pori','oulu','vaasa','sportin','kärpp')):
+                continue
+        try: stamp=parsedate_to_datetime(pub).timestamp()
+        except (ValueError,TypeError,OverflowError): continue
+        if stamp < time.time() - HISTORY_DAYS*86400 or stamp > time.time()+86400: continue
+        if link in seen:continue
+        seen.add(link)
+        found.append({'title':title,'source':'Google Uutiset', 'url':link,
+                      'summary':summary[:400], 'timestamp':stamp, 'published':pub})
+    return sorted(found,key=lambda a:a['timestamp'],reverse=True)
+
+def _refresh_team_feed(team):
+    try:
+        items=_google_team_feed(team)
+        with TEAM_RSS_LOCK:
+            TEAM_RSS_CACHE[team].update(articles=items,updated=datetime.now(timezone.utc).isoformat(),
+                                         error=None,at=time.time())
+    except Exception as exc:
+        with TEAM_RSS_LOCK:
+            TEAM_RSS_CACHE[team].update(error=f'{type(exc).__name__}: {str(exc)[:160]}',at=time.time())
+    finally:
+        with TEAM_RSS_LOCK:TEAM_RSS_CACHE[team]['refreshing']=False
+
+def team_rss(team):
+    with TEAM_RSS_LOCK:
+        cache=TEAM_RSS_CACHE.setdefault(team,{'at':0,'articles':[],'refreshing':False,'updated':None,'error':None})
+        if time.time()-cache['at']>TEAM_NEWS_TTL and not cache['refreshing']:
+            cache['refreshing']=True
+            threading.Thread(target=_refresh_team_feed,args=(team,),daemon=True).start()
+        return list(cache['articles']),cache['refreshing'],cache['error']
+
+# One shared official schedule for all clubs, cached for 30 minutes.
+# Source: https://liiga.fi/api/v2/games, season=2027 means 2026–27.
+GAMES_CACHE={'at':0,'games':[],'error':None,'refreshing':False,'updated':None}
+GAMES_LOCK=threading.RLock()
+GAMES_TTL=1800
+TEAM_ID_BY_NAME={
+    'hifk':'hifk','ifk':'hifk','hpk':'hpk','ilves':'ilves','jokerit':'jokerit',
+    'jukurit':'jukurit','jyp':'jyp','kalpa':'kalpa','kiekkoespoo':'kiekko-espoo',
+    'kespoo':'kiekko-espoo','kookoo':'kookoo','karpat':'karpat','lukko':'lukko',
+    'pelicans':'pelicans','saipa':'saipa','sport':'sport','vaasansport':'sport',
+    'tappara':'tappara','tps':'tps','assat':'assat'
+}
+
+def team_id(name):
+    if isinstance(name,dict):
+        name=next((name.get(k) for k in ('name','displayName','shortName','teamName','slug') if name.get(k)), '')
+    name=unicodedata.normalize('NFKD',str(name or '')).casefold()
+    name=''.join(ch for ch in name if not unicodedata.combining(ch))
+    name=re.sub('[^a-z0-9]','',name)
+    return TEAM_ID_BY_NAME.get(name)
+
+def _date_game(value):
+    if isinstance(value,(int,float)) and value>1e9:
+        return datetime.fromtimestamp(value/1000 if value>1e11 else value,timezone.utc).isoformat()
+    if isinstance(value,str):
+        try:
+            d=datetime.fromisoformat(value.strip().replace('Z','+00:00'))
+            if d.tzinfo is None: d=d.replace(tzinfo=timezone.utc)
+            return d.isoformat()
+        except ValueError:return None
+    return None
+
+def _game_team(obj,side):
+    # Liiga API keys may be homeTeam/awayTeam or home/away; accept both.
+    variants=(side+'Team',side+'TeamName',side+'Name',side)
+    for k in variants:
+        if obj.get(k):
+            v=obj[k]
+            if isinstance(v,dict):
+                return (v.get('teamName') or v.get('name') or v.get('displayName')
+                        or v.get('shortName') or v.get('slug') or '')
+            return str(v)
+    return ''
+
+def normalize_games(body):
+    if isinstance(body,list): rows=body
+    elif isinstance(body,dict):
+        rows=next((body[k] for k in ('games','schedule','matches','items','data') if isinstance(body.get(k),list)),[])
+        if not rows:
+            # Some schedule responses wrap weeks; unfold only known collections.
+            weeks=next((body[k] for k in ('weeks','gameWeeks') if isinstance(body.get(k),list)),[])
+            rows=[g for w in weeks if isinstance(w,dict) for g in (w.get('games') or []) if isinstance(g,dict)]
+    else: rows=[]
+    result=[]; seen=set()
+    for raw in rows:
+        if not isinstance(raw,dict):continue
+        home=_game_team(raw,'home');away=_game_team(raw,'away')
+        hid=team_id(home);aid=team_id(away)
+        if not hid or not aid: continue
+        dt=next((_date_game(raw.get(k)) for k in ('start','startTime','startDate','date','gameDate','scheduledStart') if _date_game(raw.get(k))),None)
+        if not dt:continue
+        # Keep regular season only if the field is supplied.
+        series=str(raw.get('serie') or raw.get('series') or raw.get('tournament') or '').casefold()
+        if series and not ('runkosarja' in series or series in ('1','regular','regularseason')):
+            continue
+        key=(hid,aid,dt)
+        if key in seen:continue
+        seen.add(key)
+        venue=raw.get('iceRink') or raw.get('rink') or raw.get('arena') or ''
+        if isinstance(venue,dict):venue=venue.get('name') or venue.get('city') or ''
+        result.append({'home':TEAMS[hid],'away':TEAMS[aid],'date':dt,'venue':str(venue),
+                       'home_id':hid,'away_id':aid})
+    return sorted(result,key=lambda x:x['date'])
+
+def _fetch_games():
+    url='https://liiga.fi/api/v2/games?' + urlencode({'season':2027,'tournament':'runkosarja'})
+    req=Request(url,headers={'User-Agent':'Mozilla/5.0 (Liiga365 schedule)',
+                             'Accept':'application/json','Referer':'https://liiga.fi/'})
+    with urlopen(req,timeout=12) as response:
+        if urlparse(response.geturl()).hostname not in ('liiga.fi','www.liiga.fi'):
+            raise ValueError('Unexpected schedule host')
+        data=response.read(5_000_001)
+        if len(data)>5_000_000:raise ValueError('Schedule too large')
+    games=normalize_games(json.loads(data.decode('utf-8-sig')))
+    if not games:raise ValueError('Official schedule response contained no recognized games')
+    return games
+
+def _refresh_games():
+    try:
+        games=_fetch_games()
+        with GAMES_LOCK:
+            GAMES_CACHE.update(games=games,at=time.time(),updated=datetime.now(timezone.utc).isoformat(),error=None)
+    except Exception as exc:
+        with GAMES_LOCK:GAMES_CACHE.update(at=time.time(),error=f'{type(exc).__name__}: {str(exc)[:180]}')
+    finally:
+        with GAMES_LOCK:GAMES_CACHE['refreshing']=False
+
+def matches_for(team):
+    if team not in TEAMS:return {'status':'error','games':[],'error':'Unknown team'}
+    with GAMES_LOCK:
+        if time.time()-GAMES_CACHE['at']>GAMES_TTL and not GAMES_CACHE['refreshing']:
+            GAMES_CACHE['refreshing']=True
+            threading.Thread(target=_refresh_games,daemon=True).start()
+        rows=list(GAMES_CACHE['games']); refreshing=GAMES_CACHE['refreshing']; error=GAMES_CACHE['error']; updated=GAMES_CACHE['updated']
+    now=time.time()-3*3600
+    matches=[g for g in rows if (g['home_id']==team or g['away_id']==team)
+             and datetime.fromisoformat(g['date']).timestamp()>=now]
+    matches=matches[:3]
+    return {'team':team,'games':matches,'status':'ok' if matches else ('loading' if refreshing else 'empty'),
+            'refreshing':refreshing,'updated':updated,'error':error,
+            'source':'Liiga.fi API (2026–2027 runkosarja)'}
+
+# Add second news source without blocking API requests; failure leaves shared
+# Liiga articles available and does not clear the old successful result.
+_previous_team_news=team_news
+def team_news(team):
+    if team not in TEAMS:return {'status':'error','articles':[],'error':'Unknown team'}
+    base=_previous_team_news(team)
+    # For KalPa, the existing carefully tuned club-source pipeline already
+    # works and is more useful than a second generic Google News query.
+    if team=='kalpa':return base
+    extra,busy,err=team_rss(team)
+    current=base.get('articles',[])
+    combined={a.get('url'):a for a in current+extra if a.get('url')}
+    articles=sorted(combined.values(),key=lambda a:a.get('timestamp') or 0,reverse=True)
+    base['articles']=articles[:100]
+    base['refreshing']=bool(base.get('refreshing') or busy)
+    base['partial']=base['refreshing']
+    base['status']='ok' if articles else ('loading' if base['refreshing'] else 'empty')
+    base['sources']['Google Uutiset']={'count':len(extra),'status':'error' if err else 'ok'}
+    if err:base.setdefault('errors',[]).append('Google Uutiset: '+err)
+    base['coverage']='Liiga.fi + joukkuekohtainen Google Uutiset RSS (saatavuus riippuu palveluntarjoajista)'
+    return base
+
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -1467,8 +1780,20 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
+        elif path == '/api/matches':
+            team=parse_qs(urlparse(self.path).query).get('team',['kalpa'])[0].lower()
+            if team not in TEAMS:
+                self.send_error(400,'Unknown team');return
+            payload=json.dumps(matches_for(team),ensure_ascii=False).encode('utf-8')
+            mime='application/json; charset=utf-8'
+        elif path == '/api/teams':
+            payload = json.dumps({'teams':[{'id':k,'name':v} for k,v in TEAMS.items()]},ensure_ascii=False).encode('utf-8')
+            mime = 'application/json; charset=utf-8'
         elif path == '/api/news':
-            payload = json.dumps(news(), ensure_ascii=False).encode('utf-8')
+            team=parse_qs(urlparse(self.path).query).get('team',['kalpa'])[0].lower()
+            if team not in TEAMS:
+                self.send_error(400, 'Unknown team'); return
+            payload = json.dumps(team_news(team), ensure_ascii=False).encode('utf-8')
             mime = 'application/json; charset=utf-8'
         elif path == '/api/sources':
             data = news()
