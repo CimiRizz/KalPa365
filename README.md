@@ -1,28 +1,30 @@
-# Liiga365 v0.2 – feature/liiga365
+# Liiga365 v0.3 – feature/liiga365
 
-**Älä asenna tähän pakettiin kuuluvia tiedostoja `main`-branchiin.**
+**Asenna vain `feature/liiga365`-branchiin. KalPa365:n `main`-branchia ei muuteta.**
 
-## Käyttöönotto
-1. Luo tai valitse `feature/liiga365` GitHubissa.
-2. Siirrä tämän paketin `KalPa365_palvelin.py` ja `index.html` vain siihen branchiin.
-3. Säilytä alkuperäiset staattiset tiedostot, logot, `requirements.txt`, `render-build.sh` ja `render.yaml`.
-4. Käynnistä `python KalPa365_palvelin.py` ja avaa `http://localhost:8766`.
-5. Jos julkaiset Renderiin, luo **erillinen** palvelu, jonka GitHub Branch on `feature/liiga365`. Älä muuta nykyisen KalPa365-palvelun branchia.
+## Korjaukset versioon v0.2
 
-## Uutta
-- 17 Liiga-joukkueen valinta ja selaimessa säilyvä valinta.
-- Kauden 2026–2027 runkosarjan otteluhaku: `/api/matches?team=kalpa` ja vastaavasti muut joukkueet. Yhteinen 30 minuutin välimuisti, 3 seuraavaa ottelua.
-- Uutiset: yhteinen Liiga.fi-uutisvirta, lisäksi muiden kuin KalPan osalta joukkuekohtainen julkinen Google News RSS (ei omaa maksullista API-avainta). 10 minuutin välimuisti.
-- KalPan alkuperäinen v6.25 uutishaku säilyy.
-- Haun aikana näkyvät ensimmäiset saatavilla olevat tulokset, ilman kaikkien lähteiden odotusta.
-- Virheet raportoidaan; uutisia/otteluita ei keksitä.
+- Poistettu Google Uutiset -RSS kokonaan uutisvirrasta. Google News -välityslinkit eivät olleet suoria julkaisijan artikkelilinkkejä, eivätkä toimineet KalPa365:n artikkelilukijassa.
+- Muut 16 joukkuetta: sama julkaisijavalikoima kuin KalPa365:ssä ilman KalPa.fi:tä: **Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset**.
+- Julkaisijat haetaan yhteisellä haulla. Joukkuekohtainen suodatus tehdään vasta uutisten löytämisen jälkeen, ei KalPa-nimellä lähdettä luettaessa.
+- `/api/article` ei enää vaadi, että muiden joukkueiden artikkelit löytyvät KalPa-kohtaisesta uutislistasta. Artikkelilukija rajoittuu edelleen tunnettuihin sallittuihin julkaisijoihin.
+- Säilytetty KalPan erillinen toimivaksi rakennettu uutishaku ja otteluohjelman haku.
+- `index.html` on sama kuin v0.2:ssa: hyväksyttyyn korttiasetteluun, joukkuevalintaan tai väreihin ei tehty muutoksia.
+
+## Asennus
+
+1. Avaa GitHub-repositorio ja vaihda branchiksi `feature/liiga365`.
+2. Korvaa **vain `KalPa365_palvelin.py`** tämän paketin tiedostolla.
+3. Renderin testipalvelu ottaa muutoksen käyttöön uuden julkaisun jälkeen.
+4. Avaa selaimessa Liiga365 ja paina `Ctrl+F5`.
+
+## Testaus
+
+- `python -m unittest discover -s tests -v`
+- Renderissä tarkista `/api/news?team=tappara`, `/api/news?team=ilves` ja `/api/news?team=kalpa`.
+- Artikkeleissa `source` on alkuperäinen julkaisija eikä `Google Uutiset`.
+- Klikkaa uutiskorttia: `/api/article?url=...` hakee julkaisijan artikkelin tekstin, kun se on julkisesti haettavissa. Jos teksti ei ole saatavilla, näytetään tiivistelmä tai linkki alkuperäiseen artikkeliin.
 
 ## Rajoitteet
-- Liigan julkinen API voi muuttaa vastausrakennetta tai estää Renderin. Testaa `/api/matches?team=...` julkaisuympäristössä. API:n tuloksille ei keksitä korvaavia otteluita.
-- Google News RSS voi estää pilvipalvelimelta tulevat haut. Silloin Liiga.fi toimii ainoana yhteisenä uutislähteenä kyseiselle joukkueelle.
-- Kaikkien 17 seuran omia verkkosivustoja ei ole vielä liitetty erillisinä lukijoina. Tämä versio laajentaa uutiskattavuutta kaikille joukkueille yhteisen lähteen ja joukkuekohtaisen RSS-haun kautta, mutta ei takaa kaikkien seurojen uutisten täydellistä kattavuutta.
-- Projektin lähdekoodissa ei ole mukana alkuperäisiä logoja tai muita resursseja; ne säilytetään nykyisestä branchista.
-- Kolmannen osapuolen rajapinnan käyttöehdot ja kuormitusrajat on tarkistettava ennen laajaa julkaisua.
 
-## Testit
-`python -m unittest discover -s tests -v`
+Julkaisijat voivat estää palvelimelta haun, vaihtaa sivurakennetta tai tarjota artikkeleita ilman luettavissa olevaa kokotekstiä. Tuloksia ei ole vielä testattu Renderissä. Puuttuvia uutisia, päivämääriä tai tekstiä ei keksitä. Pelkkä RSS-julkaisu ei välttämättä kata jokaista joukkueuutista. Nykyisen KalPa365:n alkuperäinen lukija ei kaikissa tapauksissa pysty tuomaan maksullista tai asiakaspohjaista sisältöä.

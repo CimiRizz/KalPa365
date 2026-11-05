@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liiga365 v0.2 — all-team news feeds and 2026–2027 official Liiga fixtures."""
+"""Liiga365 v0.3 — direct publisher news and shared Liiga fixtures."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode, urlparse, quote, parse_qs, unquote, urljoin
@@ -1422,8 +1422,8 @@ def fetch_liiga_article(original):
             'message': 'Liigan artikkelin tekstiä ei löytynyt Builder.io-rajapinnasta.'}
 
 def article_for(original, verify_only=False):
-    if not verify_only and original not in {a['url'] for a in news()['articles']}:
-        raise ValueError('Article not in current feed')
+    # Liiga365 serves other teams too: do not check only the KalPa feed.
+    # Requests are limited to the known public publisher allowlist below.
     if not allowed_publisher(original): raise ValueError('Publisher not allowed')
     if urlparse(original).hostname == 'liiga.fi':
         try:
@@ -1560,81 +1560,133 @@ def team_news(team):
             'errors':[err] if err else [],'coverage':'Liiga.fi; additional team sources pending validation'}
 
 
-# Liiga365 v0.2: all clubs have a club-specific news search in addition to
-# the single shared league-news index. RSS is best-effort; no fabricated news.
-# Aggregated Google News RSS carries links to the publisher and publication time.
-# Restrict queries to Finnish ice hockey to avoid everyday uses of team names.
-GOOGLE_NEWS_TERMS = {
-    'hifk':'HIFK jääkiekko', 'hpk':'HPK jääkiekko',
-    'ilves':'Ilves Liiga jääkiekko', 'jokerit':'Jokerit Liiga jääkiekko',
-    'jukurit':'Jukurit jääkiekko', 'jyp':'JYP jääkiekko',
-    'kalpa':'KalPa jääkiekko', 'kiekko-espoo':'Kiekko-Espoo Liiga',
-    'kookoo':'KooKoo jääkiekko', 'karpat':'Kärpät Oulu jääkiekko',
-    'lukko':'Rauman Lukko jääkiekko', 'pelicans':'Pelicans Lahti jääkiekko',
-    'saipa':'SaiPa jääkiekko', 'sport':'Vaasan Sport jääkiekko',
-    'tappara':'Tappara jääkiekko', 'tps':'TPS Turku jääkiekko',
-    'assat':'Ässät Pori jääkiekko',
+# Liiga365 v0.3: Use the same direct publishers as KalPa365, excluding
+# KalPa.fi for other teams. Publisher feeds are fetched ONCE for all clubs;
+# never use Google News links as articles because they cannot be read reliably.
+TEAM_NEWS_FEEDS = {
+    'SuomiKiekko': ['https://www.suomikiekko.com/feed/'],
+    'Yle.fi': ['https://yle.fi/rss/urheilu', 'https://yle.fi/rss/t/18-141764/fi'],
+    'MTV Uutiset': ['https://www.mtvuutiset.fi/api/feed/rss/uutiset_uusimmat'],
 }
-TEAM_RSS_CACHE = {}
-TEAM_RSS_LOCK = threading.RLock()
-TEAM_NEWS_TTL = 600
+TEAM_NEWS_DIRECT = {
+    'SuomiKiekko': ['https://www.suomikiekko.com/uusimmat/', 'https://www.suomikiekko.com/'],
+    'Kiekkouutiset': ['https://kiekkouutiset.fi/liiga/'],
+    'MTV Uutiset': ['https://www.mtvuutiset.fi/liiga', 'https://www.mtvuutiset.fi/tuoreimmat/urheilu'],
+}
+PUBLISHER_CACHE = {'at': 0, 'articles': [], 'refreshing': False, 'error': None,
+                   'sources': {}, 'updated': None}
+PUBLISHER_LOCK = threading.RLock()
 
-def _google_team_feed(team):
-    query = GOOGLE_NEWS_TERMS[team]
-    url = 'https://news.google.com/rss/search?' + urlencode({
-        'q': query + ' when:30d', 'hl':'fi', 'gl':'FI', 'ceid':'FI:fi'})
-    req = Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; Liiga365/0.2)',
-                               'Accept':'application/rss+xml, application/xml'})
-    with urlopen(req,timeout=9) as response:
-        if urlparse(response.geturl()).hostname not in ('news.google.com','www.news.google.com'):
-            raise ValueError('RSS redirect to an unexpected host')
-        raw=response.read(2_000_001)
-        if len(raw)>2_000_000: raise ValueError('RSS too large')
-    root=ET.fromstring(raw)
-    seen=set(); found=[]
-    for item in root.findall('.//item')[:80]:
-        title=strip_markup(child_text(item,{'title'}))
-        link=child_text(item,{'link'})
-        pub=child_text(item,{'pubdate','published','updated'})
-        summary=strip_markup(child_text(item,{'description'}))
-        if not title or not link or not link.startswith('https://news.google.com/'):
-            continue
-        # Query relevance is insufficient: the team must occur in headline or
-        # abstract. Some generic club names also require the hockey context.
-        if not team_article_match(team,{'title':title,'summary':summary}): continue
-        if team in ('ilves','sport','tps','lukko','assat','karpat'):
-            context=(title+' '+summary).casefold()
-            if not any(x in context for x in ('liiga','jääkiek','ottelu','pelaaj','maal','kiekko','seura','valmentaj',
-                                              'tampere','turku','rauma','pori','oulu','vaasa','sportin','kärpp')):
-                continue
-        try: stamp=parsedate_to_datetime(pub).timestamp()
-        except (ValueError,TypeError,OverflowError): continue
-        if stamp < time.time() - HISTORY_DAYS*86400 or stamp > time.time()+86400: continue
-        if link in seen:continue
+def parse_team_feed(source, raw):
+    """Read publisher RSS without the old KalPa-only relevance filter."""
+    root = ET.fromstring(raw)
+    found,seen=[],set()
+    for node in root.iter():
+        if local(node.tag) not in ('item','entry'): continue
+        title=strip_markup(child_text(node,{'title'}))
+        link=child_text(node,{'link'})
+        if not link:
+            for child in node:
+                if local(child.tag)=='link' and child.attrib.get('href') and child.attrib.get('rel','alternate')=='alternate':
+                    link=child.attrib['href'].strip();break
+        if not title or not allowed_publisher(link) or link in seen:continue
+        summary=strip_markup(child_text(node,{'description','summary','encoded','content'}))
+        date=child_text(node,{'pubdate','published','updated','date'})
+        try:stamp=parsedate_to_datetime(date).timestamp()
+        except (ValueError,TypeError,OverflowError):
+            try:stamp=datetime.fromisoformat(date.replace('Z','+00:00')).timestamp()
+            except (ValueError,TypeError,OverflowError):continue
+        if not (time.time()-HISTORY_DAYS*86400 <= stamp <= time.time()+86400):continue
         seen.add(link)
-        found.append({'title':title,'source':'Google Uutiset', 'url':link,
-                      'summary':summary[:400], 'timestamp':stamp, 'published':pub})
-    return sorted(found,key=lambda a:a['timestamp'],reverse=True)
+        found.append({'title':title,'url':link,'source':source,'summary':summary[:600],
+                      'timestamp':stamp,'published':date})
+    return found
 
-def _refresh_team_feed(team):
+def _fetch_team_feed(source, urls):
+    collected=[];diagnostics=[]
+    for url in urls:
+        try:
+            req=Request(url,headers={'User-Agent':'Mozilla/5.0 (Liiga365/0.3)',
+                                     'Accept':'application/rss+xml,application/xml,*/*'})
+            with urlopen(req,timeout=10) as response:
+                if not allowed_publisher(response.geturl()):raise ValueError('Unexpected feed redirect')
+                raw=response.read(2_000_001)
+            if len(raw)>2_000_000:raise ValueError('Feed too large')
+            matches=parse_team_feed(source,raw)
+            collected.extend(matches)
+            diagnostics.append({'url':url,'status':'ok','count':len(matches)})
+        except Exception as exc:
+            diagnostics.append({'url':url,'status':'error','message':f'{type(exc).__name__}: {str(exc)[:120]}'})
+    return collected,{'status':'ok' if any(v['status']=='ok' for v in diagnostics) else 'error',
+                      'count':len(collected),'feeds':diagnostics}
+
+def _fetch_team_direct(source,pages):
+    found=[];diagnostics=[]
+    for page in pages:
+        try:
+            req=Request(page,headers={'User-Agent':'Mozilla/5.0 (Liiga365/0.3)','Accept':'text/html'})
+            with urlopen(req,timeout=10) as response:
+                if not allowed_publisher(response.geturl()):raise ValueError('Unexpected page redirect')
+                raw=response.read(2_000_001)
+                charset=response.headers.get_content_charset() or 'utf-8'
+            if len(raw)>2_000_000:raise ValueError('Page too large')
+            parser=DirectLinkParser(source,page)
+            parser.feed(raw.decode(charset,'replace'))
+            count=0
+            # Collect a bounded number of promising titles, across ALL teams.
+            for title,link in parser.links[:150]:
+                if not any(team_article_match(team,{'title':title}) for team in TEAMS):continue
+                found.append({'title':title,'url':link,'source':source,'summary':'',
+                              'timestamp':0,'published':''})
+                count+=1
+                if count>=35:break
+            diagnostics.append({'url':page,'status':'ok','candidate_count':count})
+        except Exception as exc:
+            diagnostics.append({'url':page,'status':'error','message':f'{type(exc).__name__}: {str(exc)[:120]}'})
+    # Dates for HTML cards are derived from the original publisher pages;
+    # never label a missing date as today.
+    if found:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            found=list(pool.map(resolve_article_publication,found[:60]))
+    return [a for a in found if a.get('timestamp')],{
+        'status':'ok' if any(v['status']=='ok' for v in diagnostics) else 'error',
+        'count':sum(bool(a.get('timestamp')) for a in found),'pages':diagnostics}
+
+def _refresh_publisher_pool():
+    jobs=[('rss',src,urls) for src,urls in TEAM_NEWS_FEEDS.items()]
+    jobs += [('direct',src,pages) for src,pages in TEAM_NEWS_DIRECT.items()]
+    results=[];sources={}
     try:
-        items=_google_team_feed(team)
-        with TEAM_RSS_LOCK:
-            TEAM_RSS_CACHE[team].update(articles=items,updated=datetime.now(timezone.utc).isoformat(),
-                                         error=None,at=time.time())
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures={pool.submit(_fetch_team_feed if kind=='rss' else _fetch_team_direct,src,urls):(kind,src)
+                     for kind,src,urls in jobs}
+            for future in as_completed(futures):
+                kind,src=futures[future]
+                try:articles,info=future.result()
+                except Exception as exc:articles,info=[],{'status':'error','message':str(exc)[:120]}
+                results.extend(articles)
+                sources.setdefault(src,{})[kind]=info
+                with PUBLISHER_LOCK:
+                    # As with v6.22, expose first verified publisher results during refresh.
+                    old=PUBLISHER_CACHE.get('articles',[])
+                    merged={a['url']:a for a in old+results if a.get('url')}
+                    PUBLISHER_CACHE.update(articles=sorted(merged.values(),key=lambda a:a.get('timestamp',0),reverse=True)[:300],
+                                           sources=dict(sources))
+        with PUBLISHER_LOCK:
+            PUBLISHER_CACHE.update(at=time.time(),error=None,
+                                   updated=datetime.now(timezone.utc).isoformat())
     except Exception as exc:
-        with TEAM_RSS_LOCK:
-            TEAM_RSS_CACHE[team].update(error=f'{type(exc).__name__}: {str(exc)[:160]}',at=time.time())
+        with PUBLISHER_LOCK:PUBLISHER_CACHE.update(at=time.time(),error=f'{type(exc).__name__}: {str(exc)[:160]}')
     finally:
-        with TEAM_RSS_LOCK:TEAM_RSS_CACHE[team]['refreshing']=False
+        with PUBLISHER_LOCK:PUBLISHER_CACHE['refreshing']=False
 
-def team_rss(team):
-    with TEAM_RSS_LOCK:
-        cache=TEAM_RSS_CACHE.setdefault(team,{'at':0,'articles':[],'refreshing':False,'updated':None,'error':None})
-        if time.time()-cache['at']>TEAM_NEWS_TTL and not cache['refreshing']:
-            cache['refreshing']=True
-            threading.Thread(target=_refresh_team_feed,args=(team,),daemon=True).start()
-        return list(cache['articles']),cache['refreshing'],cache['error']
+def publisher_news():
+    with PUBLISHER_LOCK:
+        if time.time()-PUBLISHER_CACHE['at']>TTL and not PUBLISHER_CACHE['refreshing']:
+            PUBLISHER_CACHE['refreshing']=True
+            threading.Thread(target=_refresh_publisher_pool,daemon=True).start()
+        return (list(PUBLISHER_CACHE['articles']),PUBLISHER_CACHE['refreshing'],
+                dict(PUBLISHER_CACHE['sources']),PUBLISHER_CACHE['error'])
 
 # One shared official schedule for all clubs, cached for 30 minutes.
 # Source: https://liiga.fi/api/v2/games, season=2027 means 2026–27.
@@ -1748,26 +1800,24 @@ def matches_for(team):
             'refreshing':refreshing,'updated':updated,'error':error,
             'source':'Liiga.fi API (2026–2027 runkosarja)'}
 
-# Add second news source without blocking API requests; failure leaves shared
-# Liiga articles available and does not clear the old successful result.
+# One shared publisher index supplements the shared Liiga.fi index.
+# Club-specific filtering is applied after collection, not at download time.
 _previous_team_news=team_news
 def team_news(team):
     if team not in TEAMS:return {'status':'error','articles':[],'error':'Unknown team'}
+    if team=='kalpa':return _previous_team_news(team)
     base=_previous_team_news(team)
-    # For KalPa, the existing carefully tuned club-source pipeline already
-    # works and is more useful than a second generic Google News query.
-    if team=='kalpa':return base
-    extra,busy,err=team_rss(team)
-    current=base.get('articles',[])
-    combined={a.get('url'):a for a in current+extra if a.get('url')}
+    extra,busy,sources,error=publisher_news()
+    combined={a['url']:a for a in base.get('articles',[])+extra
+              if a.get('url') and team_article_match(team,a)}
     articles=sorted(combined.values(),key=lambda a:a.get('timestamp') or 0,reverse=True)
     base['articles']=articles[:100]
     base['refreshing']=bool(base.get('refreshing') or busy)
     base['partial']=base['refreshing']
     base['status']='ok' if articles else ('loading' if base['refreshing'] else 'empty')
-    base['sources']['Google Uutiset']={'count':len(extra),'status':'error' if err else 'ok'}
-    if err:base.setdefault('errors',[]).append('Google Uutiset: '+err)
-    base['coverage']='Liiga.fi + joukkuekohtainen Google Uutiset RSS (saatavuus riippuu palveluntarjoajista)'
+    base['sources'].update(sources)
+    if error:base.setdefault('errors',[]).append('Julkaisijalähteet: '+error)
+    base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset'
     return base
 
 class Handler(BaseHTTPRequestHandler):
