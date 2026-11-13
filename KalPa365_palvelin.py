@@ -2153,6 +2153,13 @@ PWA_FILES = {
     '/static/icons/liiga365-512.png': 'image/png',
 }
 
+PWA_ASSETS = {
+    '/liiga365.webmanifest': 'application/manifest+json; charset=utf-8',
+    '/liiga365-sw.js': 'text/javascript; charset=utf-8',
+    **{f'/static/icons/liiga365-{size}.png': 'image/png' for size in (180, 192, 512)},
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -2170,6 +2177,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = file.read_bytes()
             mime = PWA_FILES[path]
+        elif path in PWA_ASSETS:
+            asset = ROOT / path.lstrip('/')
+            if not asset.is_file():
+                self.send_error(404)
+                return
+            payload = asset.read_bytes()
+            mime = PWA_ASSETS[path]
         elif path == '/api/matches':
             team=parse_qs(urlparse(self.path).query).get('team',['kalpa'])[0].lower()
             if team not in TEAMS:
