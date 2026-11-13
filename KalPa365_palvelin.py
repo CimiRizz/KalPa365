@@ -2145,6 +2145,14 @@ def team_news(team):
     base['coverage']='Liiga.fi, SuomiKiekko, Yle.fi, MTV Uutiset, Kiekkouutiset, '+official_source
     return base
 
+PWA_FILES = {
+    '/manifest.webmanifest': 'application/manifest+json',
+    '/sw.js': 'application/javascript; charset=utf-8',
+    '/static/icons/liiga365-180.png': 'image/png',
+    '/static/icons/liiga365-192.png': 'image/png',
+    '/static/icons/liiga365-512.png': 'image/png',
+}
+
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if urlparse(self.path).path in ('/', '/health'):
@@ -2155,6 +2163,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in ('/', '/index.html'):
             payload = (ROOT / 'index.html').read_bytes()
             mime = 'text/html; charset=utf-8'
+        elif path in PWA_FILES:
+            file = ROOT / path.lstrip('/')
+            if not file.is_file():
+                self.send_error(404)
+                return
+            payload = file.read_bytes()
+            mime = PWA_FILES[path]
         elif path == '/api/matches':
             team=parse_qs(urlparse(self.path).query).get('team',['kalpa'])[0].lower()
             if team not in TEAMS:
