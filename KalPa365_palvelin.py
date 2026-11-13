@@ -2148,9 +2148,9 @@ def team_news(team):
 PWA_FILES = {
     '/manifest.webmanifest': 'application/manifest+json',
     '/sw.js': 'application/javascript; charset=utf-8',
-    '/static/icons/liiga365-180.png': 'image/png',
-    '/static/icons/liiga365-192.png': 'image/png',
-    '/static/icons/liiga365-512.png': 'image/png',
+    '/liiga365-180.png': 'image/png',
+    '/liiga365-192.png': 'image/png',
+    '/liiga365-512.png': 'image/png',
 }
 
 PWA_ASSETS = {
