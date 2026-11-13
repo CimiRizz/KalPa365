@@ -1,5 +1,5 @@
 // Cache the app shell and local icons. News and articles come from the server.
-const CACHE = 'liiga365-shell-v14';
+const CACHE = 'liiga365-shell-v15';
 const ASSETS = ["/manifest.webmanifest?v=13", "/liiga365-180.png?v=14", "/liiga365-192.png?v=14", "/liiga365-512.png?v=14"];
 
 self.addEventListener('install', event => {
